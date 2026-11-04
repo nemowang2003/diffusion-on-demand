@@ -38,7 +38,7 @@ in {
     settings = lib.mkOption {
       type = toml.type;
       default = {};
-      description = "Model path, auth_required, offload, idle_seconds, timeouts, queue bounds and prompt defaults.";
+      description = "Model path, auth_required, offload, idle_seconds, timeouts, queue bounds and root_path.";
     };
   };
   config = lib.mkIf cfg.enable {

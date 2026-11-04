@@ -4,7 +4,7 @@ import sys
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -78,6 +78,76 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
 
 
 class APITests(unittest.IsolatedAsyncioTestCase):
+    async def test_web_assets_and_status_do_not_load_or_keep_model_alive(self):
+        app = create_app(Config(auth_required=False, worker_command=FAKE, idle_seconds=0.05))
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                page = await client.get("/")
+                self.assertEqual(page.status_code, 200)
+                self.assertRegex(page.text, r'<base\s+href="/"')
+                for path in ("/assets/app.js", "/assets/style.css", "/status"):
+                    self.assertEqual((await client.get(path)).status_code, 200)
+                self.assertIsNone(app.state.runtime.process)
+                await client.post("/generate", json={"prompt": "one"})
+                last_used = app.state.runtime.last_used
+                for _ in range(40):
+                    await client.get("/")
+                    await client.get("/status")
+                    await asyncio.sleep(0.02)
+                    if app.state.runtime.process is None:
+                        break
+                self.assertIsNone(app.state.runtime.process)
+                self.assertEqual(app.state.runtime.last_used, last_used)
+
+    async def test_web_under_proxy_prefix_and_auth(self):
+        with patch.dict(os.environ, {"DIFFUSION_ON_DEMAND_API_KEY": "secret-key"}):
+            app = create_app(Config(root_path="/diffusion"))
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            # Both paths occur with reverse proxies: stripped or retained prefix.
+            for path in ("/", "/diffusion/", "/diffusion"):
+                page = await client.get(path, follow_redirects=True)
+                self.assertEqual(page.status_code, 200, path)
+                self.assertRegex(page.text, r'<base\s+href="/diffusion/"')
+                self.assertIn('"auth_required": true', page.text)
+                self.assertNotIn("secret-key", page.text)
+            for path in ("/assets/app.js", "/diffusion/assets/app.js"):
+                self.assertEqual((await client.get(path)).status_code, 200)
+            self.assertEqual((await client.get("/diffusion/status")).status_code, 401)
+            self.assertEqual(
+                (
+                    await client.get(
+                        "/diffusion/status", headers={"Authorization": "Bearer secret-key"}
+                    )
+                ).status_code,
+                200,
+            )
+            self.assertIsNone(app.state.runtime.process)
+
+    async def test_prompt_text_is_only_supplied_by_request(self):
+        app = create_app(Config(auth_required=False))
+        generate = AsyncMock(return_value={"image": "iVBORw0KGgo="})
+        app.state.runtime.generate = generate
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            for negative in (None, "", "avoid text"):
+                payload = {"prompt": "a quiet forest", "seed": 42}
+                if negative is not None:
+                    payload["negative_prompt"] = negative
+                response = await client.post("/generate", json=payload)
+                self.assertEqual(response.status_code, 200)
+                sent = generate.call_args.args[0]
+                self.assertEqual(sent["prompt"], payload["prompt"])
+                self.assertEqual(sent["negative_prompt"], negative or "")
+            invalid = await client.post(
+                "/generate", json={"prompt": "hello", "negative_prompt": "x" * 4001}
+            )
+            self.assertEqual(invalid.status_code, 422)
+
     async def test_auth_validation_and_generation(self):
         with patch.dict(os.environ, {"DIFFUSION_ON_DEMAND_API_KEY": "test-key"}):
             app = create_app(Config(worker_command=FAKE))

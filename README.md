@@ -1,12 +1,32 @@
 # diffusion-on-demand
 
-本地 SDXL 生成 API。轻量 HTTP 服务常驻，收到生成请求才启动独立的
+本地 SDXL 生成 API 与轻量网页前端。轻量 HTTP 服务常驻，收到生成请求才启动独立的
 Diffusers / PyTorch 进程。请求共用 FIFO 队列，空闲 30 秒退出推理进程，
 释放模型、CPU 内存和 CUDA 上下文。状态查询不会加载模型。
 
 后端直接加载 Pony Diffusion V6 XL 的 `.safetensors`，无需 Forge。
-这是独立 API，不提供 Forge WebUI、Forge API 协议或 ADetailer 扩展。
-默认提示词使用 `rating_safe`。自动人脸/手部重绘尚未实现。
+这是独立服务，不提供 Forge WebUI、Forge API 协议或 ADetailer 扩展。
+网页默认提示词使用 `rating_safe`，可直接编辑。自动人脸/手部重绘尚未实现。
+
+## 网页生图
+
+打开服务根路径 `/` 即可使用内置中文界面，无需 Node.js、前端构建或额外服务。
+通过 Tailscale Serve 发布到 `/diffusion/` 时，打开
+`https://<tailscale-host>/diffusion/`，并设置 `root_path="/diffusion"`。
+网页使用该路径下的同源 API；随机监听端口由服务发布脚本交给代理，前端无需知道端口。
+
+- 可编辑正向/负向提示词、尺寸、步数、CFG 和种子，返回实际 seed。
+- 生成期间显示等待时间，完成后预览并下载 PNG；不提供虚构的加载/采样进度。
+- 浏览器 IndexedDB 保留最近 20 张图片及其参数；点击历史图片可预览并复用参数。
+  可清空本地历史，不同步至其他设备或浏览器；隐私模式、存储限制或清理站点数据会影响保留。
+  保存失败时仍可下载当次结果。请自行下载需要长期保留的图片。
+- 页面与状态查询不会加载模型或延长闲置时间；生成结束空闲 30 秒后仍会卸载模型。
+  页面、预览与本地历史不受模型卸载影响。下一次生成会等待模型重新加载。
+- 开启鉴权时在“连接凭据”输入 API key，仅保存在页面内存中，不写入历史或浏览器存储。
+
+正向/负向默认文本只存在于网页输入框。后端不追加前缀，不注入负向提示词；API
+调用者应显式传入需要的内容。旧配置中的 `prompt_prefix` / `negative_prompt` 已移除，
+升级时需删除这两个配置键；负向提示词改为每次请求的 `negative_prompt` 字段。
 
 ## 使用
 
@@ -54,13 +74,14 @@ curl -X POST "$base/unload"
 | 生成字段 | 默认值 | 范围 |
 | --- | --- | --- |
 | `prompt` | 必填 | 非空，最多 4000 字符 |
+| `negative_prompt` | 空字符串 | 最多 4000 字符，可清空 |
 | `width` / `height` | 832 / 1216 | 512–1216，64 的倍数，总像素不超过 1024² |
 | `steps` | 30 | 1–50 |
 | `cfg_scale` | 6.5 | 1–15 |
 | `seed` | -1（随机） | -1 或 0–2³²−1 |
 
-采样器固定 Euler ancestral。默认正向质量/风格前缀和负向提示词位于
-`config.py`，可通过配置的 `prompt_prefix`、`negative_prompt` 更改。
+采样器固定 Euler ancestral。网页中的默认正向/负向提示词可在提交前修改或清空；
+后端原样使用请求中的提示词，省略 `negative_prompt` 时使用空字符串。
 SDXL 的 Diffusers 默认取 CLIP 倒数第二层，对齐 WebUI 的 Clip skip 2；
 直接传 `clip_skip=2` 会额外跳层。跨后端相同 seed 不保证相同图片。
 

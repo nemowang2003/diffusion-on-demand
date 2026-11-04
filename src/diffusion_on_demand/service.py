@@ -2,12 +2,15 @@ import asyncio
 import base64
 import contextlib
 import hmac
+import html
+import json
 import os
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .config import Config
@@ -17,6 +20,7 @@ from .runtime import Busy, Runtime, WorkerError
 class Generate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     prompt: str = Field(min_length=1, max_length=4000)
+    negative_prompt: str = Field(default="", max_length=4000)
     width: int = Field(default=832, ge=512, le=1216, strict=True)
     height: int = Field(default=1216, ge=512, le=1216, strict=True)
     steps: int = Field(default=30, ge=1, le=50, strict=True)
@@ -67,6 +71,34 @@ def create_app(config: Config, *, endpoint_file: Path | None = None, endpoint: s
 
     app = FastAPI(title="diffusion-on-demand", lifespan=lifespan, root_path=config.root_path)
     app.state.runtime = runtime
+    assets = Path(__file__).with_name("web")
+
+    @app.get("/assets/{name}", include_in_schema=False)
+    async def asset(name: str):
+        # Explicit assets avoid nested mount root-path ambiguity when Serve
+        # strips the prefix before proxying the request.
+        if name not in {"app.js", "style.css"}:
+            raise HTTPException(404, "Asset not found")
+        return FileResponse(assets / name, headers={"Cache-Control": "no-cache"})
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    async def index(request: Request):
+        # An absolute base also works when Serve receives /diffusion without a
+        # trailing slash. Never derive it from forwarded Host headers.
+        base = request.scope.get("root_path", "").rstrip("/") + "/"
+        settings = json.dumps(
+            {
+                "auth_required": config.auth_required,
+                "idle_seconds": config.idle_seconds,
+            }
+        ).replace("<", "\\u003c")
+        page = (assets / "index.html").read_text()
+        return HTMLResponse(
+            page.replace("__BASE_PATH__", html.escape(base, quote=True)).replace(
+                "__UI_SETTINGS__", settings
+            ),
+            headers={"Cache-Control": "no-cache"},
+        )
 
     async def authorize(request: Request):
         if config.auth_required and not hmac.compare_digest(
@@ -100,8 +132,6 @@ def create_app(config: Config, *, endpoint_file: Path | None = None, endpoint: s
     async def generate(body: Generate):
         payload = body.model_dump()
         payload["seed"] = secrets.randbits(32) if body.seed == -1 else body.seed
-        payload["prompt"] = ", ".join(filter(None, (config.prompt_prefix, body.prompt)))
-        payload["negative_prompt"] = config.negative_prompt
         try:
             result = await runtime.generate(payload)
         except Busy as exc:

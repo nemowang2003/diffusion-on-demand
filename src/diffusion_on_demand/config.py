@@ -18,10 +18,6 @@ class Config:
     auth_required: bool = True
     offload: str = "model"
     root_path: str = ""
-    # SDXL already selects the penultimate CLIP layer. WebUI Clip skip 2 maps
-    # to Diffusers clip_skip=None, NOT clip_skip=2 (which skips two extra layers).
-    prompt_prefix: str = "score_9, score_8_up, score_7_up, score_6_up, source_anime, rating_safe, 1girl, solo, long hair, detailed eyes, beautiful face"
-    negative_prompt: str = "score_4, score_5, score_6, low quality, worst quality, bad anatomy, bad hands, extra fingers, deformed, blurry, watermark, text"
     worker_command: tuple[str, ...] = ()
 
     def __post_init__(self):
@@ -45,9 +41,8 @@ class Config:
             raise ValueError(
                 "root_path must be empty or an absolute URL path without trailing slash"
             )
-        for name in ("model", "prompt_prefix", "negative_prompt"):
-            if not isinstance(getattr(self, name), str):
-                raise ValueError(f"{name} must be a string")
+        if not isinstance(self.model, str):
+            raise ValueError("model must be a string")
         if not isinstance(self.worker_command, (list, tuple)) or not all(
             isinstance(x, str) and x for x in self.worker_command
         ):

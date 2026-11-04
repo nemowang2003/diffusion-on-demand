@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <base href="__BASE_PATH__" />
+    <title>Diffusion · 本地生图</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="assets/style.css" />
+    <script id="ui-settings" type="application/json">
+      __UI_SETTINGS__
+    </script>
+    <script src="assets/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="." aria-label="Diffusion 首页"
+        ><span class="brand-icon">d.</span> diffusion
+        <span class="brand-note">ON DEMAND</span></a
+      >
+      <div class="connection">
+        <span id="status-dot" class="dot"></span
+        ><span id="model-status" role="status">正在连接…</span>
+      </div>
+    </header>
+    <main class="workspace">
+      <section class="controls" aria-labelledby="create-title">
+        <div class="eyebrow">YOUR LOCAL STUDIO</div>
+        <h1 id="create-title">把想象，变成画面。</h1>
+        <p class="intro">Pony V6 XL <span>·</span> 文字生成图片</p>
+        <form id="generate-form">
+          <label for="prompt"
+            >画面描述 <span class="label-note">英文提示词效果更好</span></label
+          >
+          <textarea
+            id="prompt"
+            name="prompt"
+            required
+            maxlength="4000"
+            rows="6"
+            placeholder="描述人物、场景、光线和风格…"
+          >
+score_9, score_8_up, score_7_up, score_6_up, source_anime, rating_safe, 1girl, solo, long hair, detailed eyes, beautiful face</textarea>
+          <button type="button" id="example" class="text-button">
+            试试雪中庭院 ↗
+          </button>
+          <label for="negative-prompt" class="negative-label"
+            >负向提示词 <span class="label-note">可修改或清空</span></label
+          >
+          <textarea
+            id="negative-prompt"
+            name="negative_prompt"
+            maxlength="4000"
+            rows="3"
+            placeholder="不希望出现在画面中的内容…"
+          >
+score_4, score_5, score_6, low quality, worst quality, bad anatomy, bad hands, extra fingers, deformed, blurry, watermark, text</textarea>
+          <div class="section-label">画面设置</div>
+          <label for="size">尺寸</label>
+          <select id="size">
+            <option value="832x1216">竖幅 · 832 × 1216</option>
+            <option value="1024x1024">方形 · 1024 × 1024</option>
+            <option value="1216x832">横幅 · 1216 × 832</option>
+            <option value="768x1024">轻量竖幅 · 768 × 1024</option>
+          </select>
+          <div class="field-row">
+            <div>
+              <label for="steps">步数</label
+              ><input
+                id="steps"
+                type="number"
+                min="1"
+                max="50"
+                step="1"
+                value="30"
+                required
+              />
+            </div>
+            <div>
+              <label for="cfg">提示词引导 CFG</label
+              ><input
+                id="cfg"
+                type="number"
+                min="1"
+                max="15"
+                step="0.1"
+                value="6.5"
+                required
+              />
+            </div>
+          </div>
+          <label for="seed"
+            >种子 <span class="label-note">−1 为随机</span></label
+          >
+          <input
+            id="seed"
+            type="number"
+            min="-1"
+            max="4294967295"
+            step="1"
+            value="-1"
+            required
+          />
+          <details id="auth-details" class="auth">
+            <summary>连接凭据</summary>
+            <label for="api-key"
+              >API key <span class="label-note">仅用于本页，不保存</span></label
+            ><input
+              id="api-key"
+              type="password"
+              autocomplete="off"
+              placeholder="当前 Tailnet 配置无需填写"
+            />
+          </details>
+          <button id="generate" class="primary" type="submit">
+            <span id="generate-label">生成图片</span
+            ><span aria-hidden="true">↗</span>
+          </button>
+          <p class="idle-note" id="idle-note"></p>
+        </form>
+      </section>
+      <section class="canvas-panel" aria-labelledby="preview-title">
+        <div class="panel-heading">
+          <h2 id="preview-title">画布</h2>
+          <span id="preview-meta">等待灵感落笔</span>
+        </div>
+        <div class="canvas" id="canvas" aria-busy="false">
+          <div id="empty-state" class="empty-state">
+            <div class="canvas-mark" aria-hidden="true">✳</div>
+            <h3>这里，是想象的起点。</h3>
+            <p>写下画面描述，生成你的第一张图片。</p>
+          </div>
+          <img id="preview" hidden alt="生成的图片" />
+          <div id="working" class="working" hidden>
+            <span class="spinner" aria-hidden="true"></span
+            ><strong>正在准备你的画面</strong
+            ><span id="elapsed">已等待 0 秒</span
+            ><small>可能正在排队、加载模型或生成，请稍候。</small>
+          </div>
+        </div>
+        <div class="result-toolbar">
+          <p id="result-info" role="status" aria-live="polite">
+            图片只保存在当前浏览器。
+          </p>
+          <a id="download" class="button" hidden download="diffusion.png"
+            >下载 PNG ↓</a
+          >
+        </div>
+        <p id="error" class="notice error" role="alert" hidden></p>
+        <p id="storage-notice" class="notice" role="status" hidden></p>
+        <section class="history-section" aria-labelledby="history-title">
+          <div class="panel-heading">
+            <h2 id="history-title">
+              最近创作 <span id="history-count">0</span>
+            </h2>
+            <button
+              type="button"
+              id="clear-history"
+              class="text-button"
+              disabled
+            >
+              清空历史
+            </button>
+          </div>
+          <p id="history-empty" class="history-empty">
+            本地保留最近 20 张图片，点击可预览并复用参数。
+          </p>
+          <div id="history" class="history-grid"></div>
+        </section>
+        <footer>按需加载，闲时释放。<a href="docs">API 文档 ↗</a></footer>
+      </section>
+    </main>
+    <dialog id="clear-dialog">
+      <h2>清空本地历史？</h2>
+      <p>将删除此浏览器保存的图片和参数。已下载的文件不受影响。</p>
+      <div class="dialog-actions">
+        <button id="cancel-clear" type="button" class="button">保留</button
+        ><button id="confirm-clear" type="button" class="primary">
+          清空历史
+        </button>
+      </div>
+    </dialog>
+  </body>
+</html>

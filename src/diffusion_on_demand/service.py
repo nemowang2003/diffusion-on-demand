@@ -11,31 +11,10 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse
-from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .config import Config
+from .options import Generate, model_catalog
 from .runtime import Busy, Runtime, WorkerError
-
-
-class Generate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    prompt: str = Field(min_length=1, max_length=4000)
-    negative_prompt: str = Field(default="", max_length=4000)
-    width: int = Field(default=832, ge=512, le=1216, strict=True)
-    height: int = Field(default=1216, ge=512, le=1216, strict=True)
-    steps: int = Field(default=30, ge=1, le=50, strict=True)
-    cfg_scale: float = Field(default=6.5, ge=1, le=15, allow_inf_nan=False)
-    seed: int = Field(default=-1, ge=-1, le=2**32 - 1, strict=True)
-
-    @model_validator(mode="after")
-    def dimensions(self):
-        if self.width % 64 or self.height % 64 or self.width * self.height > 1024 * 1024:
-            raise ValueError(
-                "Dimensions must be multiples of 64 and total at most 1024x1024 pixels"
-            )
-        if not self.prompt.strip():
-            raise ValueError("Prompt must not be blank")
-        return self
 
 
 def create_app(config: Config, *, endpoint_file: Path | None = None, endpoint: str = ""):
@@ -110,6 +89,14 @@ def create_app(config: Config, *, endpoint_file: Path | None = None, endpoint: s
     async def health():
         return {"status": "ok"}
 
+    @app.get("/options", dependencies=[Depends(authorize)])
+    async def options():
+        return {
+            "schema": Generate.model_json_schema(),
+            "models": list(model_catalog(config)),
+            "defaults": {"model": Path(config.model).name, "offload": config.offload},
+        }
+
     @app.get("/status", dependencies=[Depends(authorize)])
     async def status():
         return {
@@ -117,6 +104,12 @@ def create_app(config: Config, *, endpoint_file: Path | None = None, endpoint: s
             "active": runtime.active,
             "pending": runtime.pending,
             "idle_seconds": config.idle_seconds,
+            "load_options": {
+                **runtime.loaded_options,
+                "model": Path(runtime.loaded_options["model"]).name,
+            }
+            if runtime.loaded_options
+            else None,
         }
 
     @app.post("/unload", dependencies=[Depends(authorize)])
@@ -132,6 +125,11 @@ def create_app(config: Config, *, endpoint_file: Path | None = None, endpoint: s
     async def generate(body: Generate):
         payload = body.model_dump()
         payload["seed"] = secrets.randbits(32) if body.seed == -1 else body.seed
+        models = model_catalog(config)
+        selected = body.model or Path(config.model).name
+        if selected not in models:
+            raise HTTPException(422, "Unknown model; choose an installed SDXL model from /options")
+        payload["model"] = models[selected]
         try:
             result = await runtime.generate(payload)
         except Busy as exc:

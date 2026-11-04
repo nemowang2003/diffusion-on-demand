@@ -165,7 +165,19 @@
           touch "$out"
         '';
       inference = pkgs.runCommand "diffusion-on-demand-inference-import" {} ''
-        ${self.packages.${system}.default.python-env}/bin/python -c 'import torch; from diffusers import StableDiffusionXLPipeline, EulerAncestralDiscreteScheduler'
+        ${self.packages.${system}.default.python-env}/bin/python - <<'PYTHON'
+        import inspect
+        import diffusers
+        from diffusion_on_demand.options import Generate
+        from diffusion_on_demand.worker import SCHEDULERS, make_scheduler, pipeline_options
+        for sampler in SCHEDULERS:
+            request = Generate(prompt="test", sampler=sampler).model_dump()
+            scheduler = make_scheduler(diffusers, {}, request)
+            scheduler.set_timesteps(4)
+        request = Generate(prompt="test", sampler="dpmpp_2m", scheduler_options={"use_karras_sigmas": True}).model_dump()
+        make_scheduler(diffusers, {}, request).set_timesteps(4)
+        assert set(pipeline_options(request)) <= set(inspect.signature(diffusers.StableDiffusionXLPipeline.__call__).parameters)
+        PYTHON
         touch "$out"
       '';
       cli = pkgs.runCommand "diffusion-on-demand-cli-check" {} ''

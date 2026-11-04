@@ -156,6 +156,7 @@ class APITests(unittest.IsolatedAsyncioTestCase):
                 transport=httpx.ASGITransport(app=app), base_url="http://test"
             ) as client:
                 self.assertEqual((await client.get("/health")).status_code, 200)
+                self.assertEqual((await client.get("/options")).status_code, 401)
                 self.assertIsNone(app.state.runtime.process)
                 self.assertEqual(
                     (await client.post("/generate", json={"prompt": "hello"})).status_code, 401
@@ -163,7 +164,7 @@ class APITests(unittest.IsolatedAsyncioTestCase):
                 client.headers["Authorization"] = "Bearer test-key"
                 for value in (
                     {"width": 833},
-                    {"height": 1216, "width": 1216},
+                    {"height": 1217, "width": 1216},
                     {"prompt": " "},
                     {"steps": 0},
                     {"unknown": True},

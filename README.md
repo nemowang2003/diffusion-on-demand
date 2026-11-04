@@ -15,7 +15,16 @@ Diffusers / PyTorch 进程。请求共用 FIFO 队列，空闲 30 秒退出推�
 `https://<tailscale-host>/diffusion/`，并设置 `root_path="/diffusion"`。
 网页使用该路径下的同源 API；随机监听端口由服务发布脚本交给代理，前端无需知道端口。
 
-- 可编辑正向/负向提示词、尺寸、步数、CFG 和种子，返回实际 seed。
+- 可编辑正向/负向提示词、自定义尺寸、步数、CFG 和种子，返回实际 seed。
+- “模型与显存”“采样设置”“SDXL 条件”由后端参数定义生成，涵盖可用模型、卸载策略、
+  模型/VAE 精度、GPU 编号、VAE 切片/分块、注意力切片、采样器及其高级 JSON 配置、
+  CFG rescale、额外 CLIP skip、DDIM eta、自定义 timesteps/sigmas、去噪结束比例、随机数
+  生成器设备、第二文本编码器提示词及正负向尺寸/裁剪条件。所有字段随历史保存和恢复。
+  未填写的可选条件继承 Diffusers 默认行为；第二编码器提示词输入 `""` 可显式设为空字符串。
+- 可用模型为配置的 `model` 及同目录内已安装的 `.safetensors` 文件；均按 SDXL 单文件加载。
+  网页不下载模型。更换权重、卸载策略、GPU、模型/VAE 精度或切片设置时，在该请求轮到执行后
+  重启推理进程；仅改变生成或采样参数时继续复用。每次采样器从原始模型配置创建，设置不串到下一请求。
+  全局鉴权、监听、闲置时间、超时和队列容量仍由服务配置管理。
 - 生成期间显示等待时间，完成后预览并下载 PNG；不提供虚构的加载/采样进度。
 - 浏览器 IndexedDB 保存图片及其参数，不限制张数、不自动淘汰旧图片；分页读取，每页 24 张，
   点击“加载更早的图片”继续浏览。可逐张删除或清空历史，点击图片可预览并复用参数。
@@ -77,17 +86,38 @@ curl -X POST "$base/unload"
 | --- | --- | --- |
 | `prompt` | 必填 | 非空，最多 4000 字符 |
 | `negative_prompt` | 空字符串 | 最多 4000 字符，可清空 |
-| `width` / `height` | 832 / 1216 | 512–1216，64 的倍数，总像素不超过 1024² |
-| `steps` | 30 | 1–50 |
-| `cfg_scale` | 6.5 | 1–15 |
+| `width` / `height` | 832 / 1216 | 64–8192，8 的倍数；实际可生成尺寸受显存限制 |
+| `steps` | 30 | 1–1000 |
+| `cfg_scale` | 6.5 | 0–100 |
 | `seed` | -1（随机） | -1 或 0–2³²−1 |
 
-采样器固定 Euler ancestral。网页中的默认正向/负向提示词可在提交前修改或清空；
-后端原样使用请求中的提示词，省略 `negative_prompt` 时使用空字符串。
-SDXL 的 Diffusers 默认取 CLIP 倒数第二层，对齐 WebUI 的 Clip skip 2；
-直接传 `clip_skip=2` 会额外跳层。跨后端相同 seed 不保证相同图片。
+完整字段、默认值、类型和范围见 `/docs` 中的 `Generate` 模型；`GET /options` 返回相同的
+JSON Schema、当前可用模型和主机默认模型/卸载策略，不加载推理进程。该接口遵循服务鉴权。
+例如在生成请求中加入：
 
-VAE 使用 FP32，启用 VAE slicing/tiling，注意力采用 PyTorch SDPA。
+```json
+{
+  "prompt": "a quiet snowy garden",
+  "sampler": "dpmpp_2m",
+  "scheduler_options": {"use_karras_sigmas": true},
+  "offload": "sequential",
+  "precision": "float16",
+  "vae_precision": "float32",
+  "width": 1024,
+  "height": 1024
+}
+```
+
+采样器默认为 Euler ancestral，可选 Euler、DDIM、DPM++ 2M、DPM++ 2M SDE、UniPC、Heun、LMS。
+`scheduler_options` 接受所选 Diffusers scheduler 的构造参数，例如 Karras sigma、时间步间距等；
+不支持的参数或自定义时间表会返回错误，不会被静默忽略。自定义 timesteps/sigmas 覆盖步数，
+两者不可同时设置。`eta` 仅对 DDIM 生效，尺寸条件数组顺序是 `[高, 宽]`，裁剪起点为 `[上, 左]`。
+网页中的默认正向/负向提示词可在提交前修改或清空；
+后端原样使用请求中的提示词，省略 `negative_prompt` 时使用空字符串。
+`clip_skip=0` 使用 SDXL 的 Diffusers 默认倒数第二层，对齐 WebUI 的 Clip skip 2；
+`clip_skip=2` 会再额外跳层。跨后端、精度或随机数生成设备，相同 seed 不保证相同图片。
+
+默认 VAE 使用 FP32，启用 VAE slicing/tiling，注意力采用 PyTorch SDPA，均可逐请求调整。
 `offload="model"` 将暂不用的模块移至 CPU；显存不足可先试 768×1024 或
 `offload="sequential"`（更慢），或关闭其他 GPU 工作负载。
 本服务不协调 llama-on-demand 等其他应用的显存使用。

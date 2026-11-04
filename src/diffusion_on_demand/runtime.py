@@ -9,6 +9,7 @@ import sys
 import time
 
 from .config import Config
+from .options import load_options
 
 
 class Busy(Exception):
@@ -24,6 +25,7 @@ class Runtime:
         self.config = config
         self.lock = asyncio.Lock()
         self.process = None
+        self.loaded_options = None
         self.pending = 0
         self.active = False
         self.last_used = time.monotonic()
@@ -31,6 +33,7 @@ class Runtime:
 
     async def stop(self):
         process, self.process = self.process, None
+        self.loaded_options = None
         if process is None:
             return
         # Kill the group even if its leader has already exited.
@@ -57,18 +60,20 @@ class Runtime:
             raise WorkerError(response["error"])
         return response
 
-    async def start(self):
-        if self.process is not None and self.process.returncode is None:
+    async def start(self, options):
+        if (
+            self.process is not None
+            and self.process.returncode is None
+            and self.loaded_options == options
+        ):
             return
         await self.stop()
         command = self.config.worker_command or (sys.executable, "-m", "diffusion_on_demand.worker")
         spawning = asyncio.create_task(
             asyncio.create_subprocess_exec(
                 *command,
-                "--model",
-                self.config.model,
-                "--offload",
-                self.config.offload,
+                "--load-options",
+                json.dumps(options),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 # stderr goes to journal; stdout contains only the private JSON protocol.
@@ -84,6 +89,7 @@ class Runtime:
         response = await asyncio.wait_for(self._line(), self.config.startup_timeout)
         if response != {"ready": True}:
             raise WorkerError("Inference process did not become ready")
+        self.loaded_options = options
 
     async def generate(self, request: dict):
         if self.closed:
@@ -102,7 +108,7 @@ class Runtime:
                 raise Busy("Service is shutting down")
             self.active = True
             try:
-                await self.start()
+                await self.start(load_options(request, self.config))
                 self.process.stdin.write(json.dumps(request).encode() + b"\n")
                 await self.process.stdin.drain()
                 return await asyncio.wait_for(self._line(), self.config.request_timeout)

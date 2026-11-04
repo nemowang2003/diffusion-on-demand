@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import struct
 import sys
 import time
@@ -17,6 +18,8 @@ PNG = (
     + chunk(b"IEND", b"")
 )
 
+options = json.loads(sys.argv[sys.argv.index("--load-options") + 1])
+
 print(json.dumps({"ready": True}), flush=True)
 for line in sys.stdin:
     request = json.loads(line)
@@ -25,4 +28,14 @@ for line in sys.stdin:
     if "error" in request.get("prompt", ""):
         print(json.dumps({"error": "simulated OOM"}), flush=True)
     else:
-        print(json.dumps({"image": base64.b64encode(PNG).decode()}), flush=True)
+        print(
+            json.dumps(
+                {
+                    "image": base64.b64encode(PNG).decode(),
+                    "pid": os.getpid(),
+                    "load_options": options,
+                    "request": request,
+                }
+            ),
+            flush=True,
+        )

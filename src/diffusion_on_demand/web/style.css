@@ -574,6 +574,31 @@ dialog p {
 .negative-label {
   margin-top: 22px;
 }
+.option-group label {
+  margin-top: 16px;
+}
+.option-group input[type="checkbox"] {
+  display: block;
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent);
+}
+.option-note {
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--muted);
+  margin: 8px 0 14px;
+  overflow-wrap: anywhere;
+}
+.option-group textarea {
+  min-height: 65px;
+  font-size: 12px;
+}
+@media (max-width: 760px) {
+  .option-group textarea {
+    font-size: 16px;
+  }
+}
 #negative-prompt {
   min-height: 95px;
   font-size: 12px;

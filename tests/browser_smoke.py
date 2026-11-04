@@ -88,7 +88,21 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             page.locator("#api-key").fill("browser-test-key")
             page.locator("#api-key").dispatch_event("change")
             expect(page.locator("#model-status")).to_have_text("模型已释放 · 随时可用")
+            expect(page.locator("#options-state")).to_contain_text("所有参数")
             page.screenshot(path="/tmp/diffusion-web-desktop.png", full_page=True)
+            for summary in page.locator(".option-group summary").all():
+                summary.click()
+            page.locator("#option-precision").select_option("float32")
+            page.locator("#option-offload").select_option("sequential")
+            page.locator("#option-vae_tiling").uncheck()
+            page.locator("#option-sampler").select_option("dpmpp_2m")
+            page.locator("#option-scheduler_options").fill('{"use_karras_sigmas":true}')
+            page.locator("#option-prompt_2").fill('""')
+            page.locator("#option-original_size").fill("[1024,1536]")
+            page.locator("#width").fill("1536")
+            page.locator("#height").fill("1024")
+            page.locator("#steps").fill("80")
+            expect(page.locator("#size")).to_have_value("custom")
             page.locator("#prompt").fill("a quiet forest")
             page.locator("#negative-prompt").fill("")
             page.locator("#seed").fill("42")
@@ -98,6 +112,13 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             assert page.locator("#preview").evaluate("img => img.complete && img.naturalWidth > 0")
             assert payloads[-1]["prompt"] == "a quiet forest"
             assert payloads[-1]["negative_prompt"] == ""
+            assert payloads[-1]["precision"] == "float32"
+            assert payloads[-1]["offload"] == "sequential"
+            assert payloads[-1]["vae_tiling"] is False
+            assert payloads[-1]["scheduler_options"] == {"use_karras_sigmas": True}
+            assert payloads[-1]["prompt_2"] == ""
+            assert payloads[-1]["original_size"] == [1024, 1536]
+            assert payloads[-1]["width"] == 1536
             with page.expect_download() as download:
                 page.locator("#download").click()
             with tempfile.TemporaryDirectory() as directory:
@@ -111,6 +132,20 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             expect(page.locator("#negative-prompt")).to_have_value("")
             expect(page.locator("#seed")).to_have_value("42")
             page.locator("#api-key").fill("browser-test-key")
+            page.locator("#api-key").dispatch_event("change")
+            expect(page.locator("#options-state")).to_contain_text("所有参数")
+            expect(page.locator("#option-offload")).to_have_value("sequential")
+            expect(page.locator("#option-precision")).to_have_value("float32")
+            expect(page.locator("#option-vae_tiling")).not_to_be_checked()
+            expect(page.locator("#option-original_size")).to_have_value("[1024,1536]")
+            # Invalid JSON must be rejected locally, without starting a request.
+            page.locator(".option-group summary").nth(1).click()
+            page.locator("#option-scheduler_options").fill("{")
+            previous_requests = len(payloads)
+            page.locator("#generate").click()
+            expect(page.locator("#error")).to_contain_text("无效 JSON")
+            assert len(payloads) == previous_requests
+            page.locator("#option-scheduler_options").fill('{"use_karras_sigmas":true}')
             page.locator("#prompt").fill("error")
             page.locator("#generate").click()
             expect(page.locator("#error")).to_contain_text("simulated OOM")

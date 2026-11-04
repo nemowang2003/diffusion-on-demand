@@ -6,7 +6,17 @@ requires-python = ">=3.12,<3.14"
 dependencies = ["fastapi>=0.115,<1", "httpx>=0.28,<1", "uvicorn>=0.34,<1"]
 
 [project.optional-dependencies]
-inference = ["torch>=2.7,<3", "diffusers>=0.35,<1", "transformers>=4.49,<5", "accelerate>=1,<2", "safetensors>=0.5,<1", "pillow>=11,<13", "sentencepiece>=0.2,<1", "protobuf>=5,<8"]
+inference = [
+    "torch>=2.7,<3",
+    "diffusers>=0.35,<1",
+    "transformers>=4.49,<5",
+    "accelerate>=1,<2",
+    "safetensors>=0.5,<1",
+    "pillow>=11,<13",
+    "sentencepiece>=0.2,<1",
+    "protobuf>=5,<8",
+    "scipy>=1.14,<2",
+]
 
 [project.scripts]
 diffusion-on-demand = "diffusion_on_demand:main"

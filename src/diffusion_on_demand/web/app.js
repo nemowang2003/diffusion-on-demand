@@ -13,6 +13,11 @@ let deletionID = null;
 let thumbnailURLs = [];
 let generating = false;
 let polling = false;
+let optionDefinitions = {};
+let optionDefaults = {};
+let optionsReady = false;
+let optionsPending = null;
+let restoreOptions = null;
 
 $("idle-note").textContent =
   `空闲 ${settings.idle_seconds} 秒自动释放模型。下次生成时重新加载。`;
@@ -91,6 +96,180 @@ setInterval(pollStatus, 4000);
 document.addEventListener("visibilitychange", pollStatus);
 $("api-key").addEventListener("change", pollStatus);
 void pollStatus();
+
+function setOptionValue(name, value) {
+  const input = document.getElementById(`option-${name}`);
+  if (!input) return;
+  if (
+    input.tagName === "SELECT" &&
+    value != null &&
+    ![...input.options].some((option) => option.value === value)
+  ) {
+    const missing = document.createElement("option");
+    missing.value = value;
+    missing.textContent = `${value}（当前不可用）`;
+    input.append(missing);
+  }
+  if (input.type === "checkbox") input.checked = Boolean(value);
+  else if (input.dataset.format === "json")
+    input.value = value == null ? "" : JSON.stringify(value);
+  else
+    input.value =
+      value == null
+        ? ""
+        : value === "" && input.dataset.nullable === "true"
+          ? '\"\"'
+          : value;
+}
+
+async function loadOptions() {
+  if (optionsPending) return optionsPending;
+  optionsPending = (async () => {
+    try {
+      const response = await api("options", {
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!response.ok) throw await responseError(response);
+      const result = await response.json();
+      optionDefinitions = result.schema.properties;
+      optionDefaults = Object.fromEntries(
+        Object.entries(optionDefinitions).map(([name, field]) => [
+          name,
+          result.defaults[name] ?? field.default,
+        ]),
+      );
+      const groups = new Map();
+      $("generation-options").replaceChildren();
+      for (const [name, definition] of Object.entries(optionDefinitions)) {
+        if (!definition.group) continue;
+        let group = groups.get(definition.group);
+        if (!group) {
+          group = document.createElement("details");
+          group.className = "option-group";
+          const summary = document.createElement("summary");
+          summary.textContent = definition.group;
+          group.append(summary);
+          groups.set(definition.group, group);
+          $("generation-options").append(group);
+        }
+        const schema =
+          definition.anyOf?.find((item) => item.type !== "null") || definition;
+        const nullable = Boolean(
+          definition.anyOf?.some((item) => item.type === "null"),
+        );
+        const choices = name === "model" ? result.models : schema.enum;
+        const input = document.createElement(
+          choices
+            ? "select"
+            : schema.type === "string" ||
+                schema.type === "object" ||
+                schema.type === "array"
+              ? "textarea"
+              : "input",
+        );
+        input.id = `option-${name}`;
+        input.dataset.nullable = String(nullable);
+        input.dataset.option = name;
+        input.addEventListener("invalid", () => {
+          group.open = true;
+        });
+        if (choices) {
+          for (const value of choices) {
+            const choice = document.createElement("option");
+            choice.value = value;
+            choice.textContent = value;
+            input.append(choice);
+          }
+        } else if (schema.type === "boolean") input.type = "checkbox";
+        else if (schema.type === "number" || schema.type === "integer") {
+          input.type = "number";
+          input.step = schema.type === "integer" ? "1" : "any";
+          if (schema.minimum != null) input.min = schema.minimum;
+          if (schema.maximum != null) input.max = schema.maximum;
+          input.required = !nullable;
+        } else {
+          input.rows = 2;
+          input.dataset.format = schema.type === "string" ? "text" : "json";
+          if (schema.maxLength) input.maxLength = schema.maxLength;
+          input.addEventListener("input", () => input.setCustomValidity(""));
+        }
+        const label = document.createElement("label");
+        label.htmlFor = input.id;
+        label.textContent = definition.title;
+        group.append(label, input);
+        if (definition.description) {
+          const note = document.createElement("p");
+          note.className = "option-note";
+          note.textContent = definition.description;
+          group.append(note);
+        }
+        setOptionValue(name, restoreOptions?.[name] ?? optionDefaults[name]);
+      }
+      optionsReady = true;
+      restoreOptions = null;
+      $("options-state").textContent =
+        "所有参数随本次请求提交，并保存到历史记录。";
+      $("retry-options").hidden = true;
+      return true;
+    } catch (error) {
+      $("options-state").textContent = error.message;
+      $("retry-options").hidden = false;
+      return false;
+    } finally {
+      optionsPending = null;
+    }
+  })();
+  return optionsPending;
+}
+
+function readOptionValues() {
+  const values = {};
+  for (const input of document.querySelectorAll("[data-option]")) {
+    let value;
+    try {
+      value =
+        input.type === "checkbox"
+          ? input.checked
+          : input.value === "" && input.dataset.nullable === "true"
+            ? null
+            : input.type === "number"
+              ? Number(input.value)
+              : input.dataset.format === "json"
+                ? JSON.parse(input.value)
+                : input.dataset.nullable === "true" && input.value === '\"\"'
+                  ? ""
+                  : input.value;
+    } catch {
+      input.setCustomValidity("请输入有效 JSON");
+      input.closest("details").open = true;
+      input.reportValidity();
+      throw new Error("高级参数中有无效 JSON，请修正后重试。");
+    }
+    values[input.dataset.option] = value;
+  }
+  return values;
+}
+
+$("retry-options").addEventListener("click", loadOptions);
+$("api-key").addEventListener("change", () => {
+  if (!optionsReady) void loadOptions();
+});
+void loadOptions();
+
+function syncSizePreset() {
+  const value = `${$("width").value}x${$("height").value}`;
+  $("size").value = [...$("size").options].some(
+    (option) => option.value === value,
+  )
+    ? value
+    : "custom";
+}
+$("size").addEventListener("change", () => {
+  if ($("size").value !== "custom")
+    [$("width").value, $("height").value] = $("size").value.split("x");
+});
+for (const name of ["width", "height"])
+  $(name).addEventListener("input", syncSizePreset);
 
 function storageNotice(message) {
   $("storage-notice").textContent = message;
@@ -176,10 +355,19 @@ function showRecord(record, restore = false) {
   if (restore) {
     $("prompt").value = record.params.prompt;
     $("negative-prompt").value = record.params.negative_prompt;
-    $("size").value = `${record.params.width}x${record.params.height}`;
+    $("width").value = record.params.width;
+    $("height").value = record.params.height;
+    syncSizePreset();
     $("steps").value = record.params.steps;
     $("cfg").value = record.params.cfg_scale;
     $("seed").value = record.seed;
+    restoreOptions = record.params;
+    if (optionsReady) {
+      for (const [name, definition] of Object.entries(optionDefinitions)) {
+        if (definition.group)
+          setOptionValue(name, record.params[name] ?? optionDefaults[name]);
+      }
+    }
   }
 }
 
@@ -263,15 +451,25 @@ $("generate-form").addEventListener("submit", async (event) => {
     $("prompt").focus();
     return;
   }
-  const [width, height] = $("size").value.split("x").map(Number);
+  if (!optionsReady && !(await loadOptions())) return;
+  if (generating) return;
+  let advanced;
+  try {
+    advanced = readOptionValues();
+  } catch (error) {
+    $("error").textContent = error.message;
+    $("error").hidden = false;
+    return;
+  }
   const params = {
     prompt: $("prompt").value,
     negative_prompt: $("negative-prompt").value,
-    width,
-    height,
+    width: Number($("width").value),
+    height: Number($("height").value),
     steps: Number($("steps").value),
     cfg_scale: Number($("cfg").value),
     seed: Number($("seed").value),
+    ...advanced,
   };
   generating = true;
   $("generate").disabled = true;

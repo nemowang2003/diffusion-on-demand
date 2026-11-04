@@ -152,7 +152,7 @@ score_4, score_5, score_6, low quality, worst quality, bad anatomy, bad hands, e
         <section class="history-section" aria-labelledby="history-title">
           <div class="panel-heading">
             <h2 id="history-title">
-              最近创作 <span id="history-count">0</span>
+              创作历史 <span id="history-count">0</span>
             </h2>
             <button
               type="button"
@@ -164,16 +164,24 @@ score_4, score_5, score_6, low quality, worst quality, bad anatomy, bad hands, e
             </button>
           </div>
           <p id="history-empty" class="history-empty">
-            本地保留最近 20 张图片，点击可预览并复用参数。
+            还没有创作记录。生成图片后会自动保存。
+          </p>
+          <p class="history-note">
+            图片保存在此浏览器，不限张数、不自动删除，受浏览器存储空间限制。
           </p>
           <div id="history" class="history-grid"></div>
+          <button id="load-history" type="button" class="button" hidden>
+            加载更早的图片
+          </button>
         </section>
         <footer>按需加载，闲时释放。<a href="docs">API 文档 ↗</a></footer>
       </section>
     </main>
     <dialog id="clear-dialog">
-      <h2>清空本地历史？</h2>
-      <p>将删除此浏览器保存的图片和参数。已下载的文件不受影响。</p>
+      <h2 id="delete-title">清空本地历史？</h2>
+      <p id="delete-description">
+        将删除此浏览器保存的图片和参数。已下载的文件不受影响。
+      </p>
       <div class="dialog-actions">
         <button id="cancel-clear" type="button" class="button">保留</button
         ><button id="confirm-clear" type="button" class="primary">

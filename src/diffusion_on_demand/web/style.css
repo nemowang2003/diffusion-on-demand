@@ -419,6 +419,31 @@ h2 {
 .history-card:hover {
   border-color: var(--accent);
 }
+.history-open {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+}
+.history-delete {
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  padding: 8px;
+  width: 100%;
+  color: #a13e3e;
+  font-size: 11px;
+}
+.history-note {
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--muted);
+}
+#load-history {
+  margin-top: 18px;
+}
 .history-card img {
   width: 100%;
   height: 115px;

@@ -106,7 +106,7 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
                 assert target.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
             page.reload()
             expect(page.locator("#history-count")).to_have_text("1")
-            page.locator(".history-card").click()
+            page.locator(".history-open").click()
             expect(page.locator("#prompt")).to_have_value("a quiet forest")
             expect(page.locator("#negative-prompt")).to_have_value("")
             expect(page.locator("#seed")).to_have_value("42")
@@ -121,7 +121,7 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             expect(page.locator("#error")).to_contain_text("API key")
             saved = page.evaluate("""async () => {
                 const db = await new Promise((resolve, reject) => {
-                    const r = indexedDB.open('diffusion-history:/diffusion/', 1);
+                    const r = indexedDB.open('diffusion-history:/diffusion/');
                     r.onsuccess = () => resolve(r.result); r.onerror = reject;
                 });
                 return await new Promise(resolve => {
@@ -141,6 +141,66 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             expect(page.locator("#history-count")).to_have_text("0")
             page.reload()
             expect(page.locator("#history-empty")).to_be_visible()
+            # Upgrade an existing v1 database with >20 records, then paginate
+            # and delete records without discarding any older images.
+            archive = browser.new_context()
+            archive_page = archive.new_page()
+            archive_page.on("pageerror", lambda error: errors.append(str(error)))
+            archive_page.route(
+                "**/assets/app.js",
+                lambda route: route.fulfill(body="", content_type="text/javascript"),
+            )
+            archive_page.goto(base)
+            archive_page.evaluate("""async () => {
+                const db = await new Promise((resolve, reject) => {
+                    const r = indexedDB.open('diffusion-history:/diffusion/', 1);
+                    r.onupgradeneeded = () => r.result.createObjectStore('images', {keyPath:'id'});
+                    r.onsuccess = () => resolve(r.result); r.onerror = reject;
+                });
+                await new Promise((resolve, reject) => {
+                    const tx = db.transaction('images', 'readwrite');
+                    for (let i = 0; i < 61; i++) tx.objectStore('images').put({
+                        id: `old-${String(i).padStart(3,'0')}`, created: i + 1,
+                        params: {prompt:`old image ${i}`, negative_prompt:'', width:832,
+                            height:1216, steps:30, cfg_scale:6.5, seed:i}, seed:i,
+                        blob:new Blob(['old-image'], {type:'image/png'})
+                    });
+                    tx.oncomplete = resolve; tx.onerror = reject;
+                });
+                db.close();
+            }""")
+            archive_page.unroute("**/assets/app.js")
+            archive_page.reload()
+            expect(archive_page.locator("#history-count")).to_have_text("61")
+            expect(archive_page.locator(".history-card")).to_have_count(24)
+            archive_page.locator("#load-history").click()
+            expect(archive_page.locator(".history-card")).to_have_count(48)
+            archive_page.locator("#load-history").click()
+            expect(archive_page.locator(".history-card")).to_have_count(61)
+            expect(archive_page.locator("#load-history")).to_be_hidden()
+            # Cancel a single deletion, then confirm it; the selected preview
+            # and download must not continue to reference the deleted image.
+            archive_page.locator(".history-open").first.click()
+            archive_page.locator(".history-delete").first.click()
+            archive_page.locator("#cancel-clear").click()
+            expect(archive_page.locator("#history-count")).to_have_text("61")
+            archive_page.locator(".history-delete").first.click()
+            archive_page.locator("#confirm-clear").click()
+            expect(archive_page.locator("#history-count")).to_have_text("60")
+            expect(archive_page.locator("#download")).to_be_hidden()
+            archive_page.locator("#api-key").fill("browser-test-key")
+            archive_page.locator("#prompt").fill("new image after old history")
+            archive_page.locator("#generate").click()
+            expect(archive_page.locator("#history-count")).to_have_text("61")
+            archive_page.reload()
+            expect(archive_page.locator("#history-count")).to_have_text("61")
+            # Other images survive reload, and deleting one does not hide the
+            # current preview when a different image is selected.
+            archive_page.locator(".history-delete").nth(1).click()
+            archive_page.locator("#confirm-clear").click()
+            expect(archive_page.locator("#history-count")).to_have_text("60")
+            expect(archive_page.locator("#download")).to_be_visible()
+            archive.close()
             # Storage denial must not prevent generation and download.
             other = browser.new_context()
             other.add_init_script(

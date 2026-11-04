@@ -3,10 +3,13 @@
 const $ = (id) => document.getElementById(id);
 const settings = JSON.parse($("ui-settings").textContent);
 const defaultPrompt = $("prompt").defaultValue;
-const historyLimit = 20;
+const historyPageSize = 24;
 let records = [];
+let historyTotal = 0;
 let database = null;
 let currentURL = null;
+let currentID = null;
+let deletionID = null;
 let thumbnailURLs = [];
 let generating = false;
 let polling = false;
@@ -98,10 +101,14 @@ async function openHistory() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(
       `diffusion-history:${new URL(document.baseURI).pathname}`,
-      1,
+      2,
     );
-    request.onupgradeneeded = () =>
-      request.result.createObjectStore("images", { keyPath: "id" });
+    request.onupgradeneeded = () => {
+      const store = request.result.objectStoreNames.contains("images")
+        ? request.transaction.objectStore("images")
+        : request.result.createObjectStore("images", { keyPath: "id" });
+      store.createIndex("created-id", ["created", "id"], { unique: true });
+    };
     request.onerror = () => reject(request.error);
     request.onblocked = () => reject(new Error("历史数据库被其他页面占用"));
     request.onsuccess = () => {
@@ -115,12 +122,24 @@ async function openHistory() {
   });
 }
 
-function readHistory() {
+function readHistory(before = null) {
   return new Promise((resolve, reject) => {
     const tx = database.transaction("images", "readonly");
-    const request = tx.objectStore("images").getAll();
-    tx.oncomplete = () =>
-      resolve(request.result.sort((a, b) => b.created - a.created));
+    const store = tx.objectStore("images");
+    const count = store.count();
+    const range = before
+      ? IDBKeyRange.upperBound([before.created, before.id], true)
+      : null;
+    const request = store.index("created-id").openCursor(range, "prev");
+    const items = [];
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (cursor && items.length < historyPageSize) {
+        items.push(cursor.value);
+        if (items.length < historyPageSize) cursor.continue();
+      }
+    };
+    tx.oncomplete = () => resolve({ items, total: count.result });
     tx.onabort = () => reject(tx.error);
     tx.onerror = () => reject(tx.error);
   });
@@ -132,13 +151,15 @@ function updateHistory(record, removeIDs = []) {
     const store = tx.objectStore("images");
     if (record) store.put(record);
     for (const id of removeIDs) store.delete(id);
-    tx.oncomplete = resolve;
+    const count = store.count();
+    tx.oncomplete = () => resolve(count.result);
     tx.onabort = () => reject(tx.error);
     tx.onerror = () => reject(tx.error);
   });
 }
 
 function showRecord(record, restore = false) {
+  currentID = record.id;
   if (currentURL) URL.revokeObjectURL(currentURL);
   currentURL = URL.createObjectURL(record.blob);
   $("preview").src = currentURL;
@@ -166,14 +187,17 @@ function renderHistory() {
   thumbnailURLs.forEach((url) => URL.revokeObjectURL(url));
   thumbnailURLs = [];
   $("history").replaceChildren();
-  $("history-count").textContent = records.length;
+  $("history-count").textContent = historyTotal;
   $("history-empty").hidden = records.length > 0;
-  $("clear-history").disabled = records.length === 0;
+  $("clear-history").disabled = historyTotal === 0;
+  $("load-history").hidden = !database || records.length >= historyTotal;
   for (const record of records) {
-    const card = document.createElement("button");
-    card.type = "button";
+    const card = document.createElement("article");
     card.className = "history-card";
-    card.title = `预览并复用参数：${record.params.prompt}`;
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "history-open";
+    open.title = `预览并复用参数：${record.params.prompt}`;
     const img = document.createElement("img");
     img.src = URL.createObjectURL(record.blob);
     thumbnailURLs.push(img.src);
@@ -181,8 +205,15 @@ function renderHistory() {
     img.loading = "lazy";
     const caption = document.createElement("span");
     caption.textContent = record.params.prompt;
-    card.append(img, caption);
-    card.addEventListener("click", () => showRecord(record, true));
+    open.append(img, caption);
+    open.addEventListener("click", () => showRecord(record, true));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "history-delete";
+    remove.textContent = "删除";
+    remove.setAttribute("aria-label", `删除图片：${record.params.prompt}`);
+    remove.addEventListener("click", () => confirmDeletion(record.id));
+    card.append(open, remove);
     $("history").append(card);
   }
 }
@@ -190,7 +221,9 @@ function renderHistory() {
 const historyReady = (async () => {
   try {
     database = await openHistory();
-    records = (await readHistory()).slice(0, historyLimit);
+    const page = await readHistory();
+    records = page.items;
+    historyTotal = page.total;
     renderHistory();
     if (records.length) showRecord(records[0]);
   } catch {
@@ -200,6 +233,22 @@ const historyReady = (async () => {
     );
   }
 })();
+
+$("load-history").addEventListener("click", async () => {
+  $("load-history").disabled = true;
+  const before = records.at(-1);
+  try {
+    const page = await readHistory(before);
+    const existing = new Set(records.map((record) => record.id));
+    records.push(...page.items.filter((record) => !existing.has(record.id)));
+    historyTotal = Math.max(page.total, records.length);
+    renderHistory();
+  } catch {
+    storageNotice("读取历史失败，请稍后重试。");
+  } finally {
+    $("load-history").disabled = false;
+  }
+});
 
 $("example").addEventListener("click", () => {
   $("prompt").value =
@@ -256,15 +305,13 @@ $("generate-form").addEventListener("submit", async (event) => {
     };
     await historyReady;
     showRecord(record);
-    const old = records;
-    records = [record, ...old].slice(0, historyLimit);
+    records.unshift(record);
+    historyTotal += 1;
     renderHistory();
     if (database) {
       try {
-        await updateHistory(
-          record,
-          old.slice(historyLimit - 1).map((item) => item.id),
-        );
+        historyTotal = Math.max(await updateHistory(record), records.length);
+        renderHistory();
       } catch {
         storageNotice(
           "图片已生成，但本地历史保存失败（可能空间不足）。请先下载图片；本次结果仅在当前页面保留。",
@@ -290,36 +337,55 @@ $("generate-form").addEventListener("submit", async (event) => {
   }
 });
 
-$("clear-history").addEventListener("click", () =>
-  $("clear-dialog").showModal(),
-);
+function confirmDeletion(id = null) {
+  deletionID = id;
+  $("delete-title").textContent =
+    id === null ? "清空本地历史？" : "删除这张图片？";
+  $("delete-description").textContent =
+    id === null
+      ? "将删除此浏览器保存的所有图片和参数。已下载的文件不受影响。"
+      : "将删除此浏览器保存的这张图片和参数。已下载的文件不受影响。";
+  $("confirm-clear").textContent = id === null ? "清空历史" : "删除图片";
+  $("clear-dialog").showModal();
+}
+
+function clearPreview() {
+  if (currentURL) URL.revokeObjectURL(currentURL);
+  currentURL = null;
+  currentID = null;
+  $("preview").removeAttribute("src");
+  $("preview").hidden = true;
+  $("download").removeAttribute("href");
+  $("download").hidden = true;
+  $("empty-state").hidden = false;
+  $("preview-meta").textContent = "等待灵感落笔";
+  $("result-info").textContent = "图片只保存在当前浏览器。";
+}
+
+$("clear-history").addEventListener("click", () => confirmDeletion());
 $("cancel-clear").addEventListener("click", () => $("clear-dialog").close());
 $("confirm-clear").addEventListener("click", async () => {
   $("confirm-clear").disabled = true;
+  const id = deletionID;
   try {
     if (database) {
       // Clear atomically; keep the in-memory list if storage fails.
       await new Promise((resolve, reject) => {
         const tx = database.transaction("images", "readwrite");
-        tx.objectStore("images").clear();
+        const store = tx.objectStore("images");
+        if (id === null) store.clear();
+        else store.delete(id);
         tx.oncomplete = resolve;
         tx.onabort = () => reject(tx.error);
         tx.onerror = () => reject(tx.error);
       });
     }
-    records = [];
+    records = id === null ? [] : records.filter((record) => record.id !== id);
+    historyTotal = id === null ? 0 : Math.max(0, historyTotal - 1);
     renderHistory();
-    if (currentURL) URL.revokeObjectURL(currentURL);
-    currentURL = null;
-    $("preview").removeAttribute("src");
-    $("preview").hidden = true;
-    $("download").removeAttribute("href");
-    $("download").hidden = true;
-    $("empty-state").hidden = false;
-    $("preview-meta").textContent = "等待灵感落笔";
-    $("result-info").textContent = "图片只保存在当前浏览器。";
+    if (id === null || currentID === id) clearPreview();
   } catch {
-    storageNotice("无法清空本地历史，请检查浏览器存储权限后重试。");
+    storageNotice("无法删除本地历史，请检查浏览器存储权限后重试。");
   } finally {
     $("confirm-clear").disabled = false;
     $("clear-dialog").close();

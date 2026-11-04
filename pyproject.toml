@@ -1,0 +1,30 @@
+[project]
+name = "diffusion-on-demand"
+version = "0.1.0"
+description = "Queued, on-demand local SDXL image generation API"
+requires-python = ">=3.12,<3.14"
+dependencies = ["fastapi>=0.115,<1", "httpx>=0.28,<1", "uvicorn>=0.34,<1"]
+
+[project.optional-dependencies]
+inference = ["torch>=2.7,<3", "diffusers>=0.35,<1", "transformers>=4.49,<5", "accelerate>=1,<2", "safetensors>=0.5,<1", "pillow>=11,<13", "sentencepiece>=0.2,<1", "protobuf>=5,<8"]
+
+[project.scripts]
+diffusion-on-demand = "diffusion_on_demand:main"
+
+[build-system]
+requires = ["uv_build>=0.13.5,<0.14"]
+build-backend = "uv_build"
+
+[dependency-groups]
+build = ["uv_build>=0.13.5,<0.14"]
+dev = ["ruff>=0.14,<1"]
+
+[tool.uv]
+default-groups = ["dev", "build"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]

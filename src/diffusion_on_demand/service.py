@@ -65,7 +65,7 @@ def create_app(config: Config, *, endpoint_file: Path | None = None, endpoint: s
             if endpoint_file:
                 endpoint_file.unlink(missing_ok=True)
 
-    app = FastAPI(title="Diffusion on demand", lifespan=lifespan, root_path=config.root_path)
+    app = FastAPI(title="diffusion-on-demand", lifespan=lifespan, root_path=config.root_path)
     app.state.runtime = runtime
 
     async def authorize(request: Request):

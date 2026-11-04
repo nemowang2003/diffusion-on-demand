@@ -155,7 +155,7 @@
           module = self.homeManagerModules.default;
         };
       in
-        pkgs.runCommand "diffusion-home-manager-check" {} ''
+        pkgs.runCommand "diffusion-on-demand-home-manager-check" {} ''
           ${package.python-env}/bin/python - <<'PYTHON'
           import tomllib
           from pathlib import Path
@@ -164,15 +164,15 @@
           PYTHON
           touch "$out"
         '';
-      inference = pkgs.runCommand "diffusion-inference-import" {} ''
+      inference = pkgs.runCommand "diffusion-on-demand-inference-import" {} ''
         ${self.packages.${system}.default.python-env}/bin/python -c 'import torch; from diffusers import StableDiffusionXLPipeline, EulerAncestralDiscreteScheduler'
         touch "$out"
       '';
-      cli = pkgs.runCommand "diffusion-cli-check" {} ''
+      cli = pkgs.runCommand "diffusion-on-demand-cli-check" {} ''
         ${package}/bin/diffusion-on-demand --help
         touch "$out"
       '';
-      unit = pkgs.runCommand "diffusion-unit-check" {} ''
+      unit = pkgs.runCommand "diffusion-on-demand-unit-check" {} ''
         export PYTHONDONTWRITEBYTECODE=1
         export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
         ${package.python-env}/bin/python -m unittest discover -s ${self}/tests

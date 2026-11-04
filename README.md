@@ -80,10 +80,10 @@ VAE 使用 FP32，启用 VAE slicing/tiling，注意力采用 PyTorch SDPA。
 
 ```nix
 {
-  imports = [inputs.diffusion.homeManagerModules.default];
+  imports = [inputs.diffusion-on-demand.homeManagerModules.default];
   services.diffusion-on-demand = {
     enable = true;
-    package = inputs.diffusion.lib.mkPackage {
+    package = inputs.diffusion-on-demand.lib.mkPackage {
       inherit pkgs;
       driverPath = "/usr/lib/wsl/lib:/run/opengl-driver/lib"; # WSL
     };
@@ -102,8 +102,8 @@ VAE 使用 FP32，启用 VAE slicing/tiling，注意力采用 PyTorch SDPA。
 systemd READY。`diffusion-on-demand endpoint` 可发现入口。
 `ExecStartPost` 可读取 `services.diffusion-on-demand.endpoint-file` 发布该端点；
 `%t` 由 systemd 展开。停止服务时杀死整个进程组。
-发布至 Tailscale Serve 的 `/diffusion/` 时，外部接口为
-`https://<tailscale-host>/diffusion/generate`，代理需移除该路径前缀，并配置 `root_path="/diffusion"` 使 API 文档正确寻址。
+发布至 Tailscale Serve 的 `/diffusion-on-demand/` 时，外部接口为
+`https://<tailscale-host>/diffusion-on-demand/generate`，代理需移除该路径前缀，并配置 `root_path="/diffusion-on-demand"` 使 API 文档正确寻址。
 每次重启服务都要重新发布新端口；主机的 Windows/Tailscale 操作留在主机配置。
 
 ```sh

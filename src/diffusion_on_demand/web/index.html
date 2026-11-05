@@ -130,6 +130,28 @@ score_4, score_5, score_6, low quality, worst quality, bad anatomy, bad hands, e
             required
           />
           <div id="generation-options" aria-live="polite"></div>
+          <div class="model-preset">
+            <button
+              type="button"
+              id="apply-model-preset"
+              class="button"
+              disabled
+            >
+              应用所选模型预设
+            </button>
+            <p class="option-note" id="preset-description">
+              预设会替换提示词和采样参数，可继续编辑；GPU、精度、显存策略与 seed
+              保持当前选择。
+            </p>
+            <a
+              id="preset-source"
+              class="text-button"
+              target="_blank"
+              rel="noopener noreferrer"
+              hidden
+              >模型说明 ↗</a
+            >
+          </div>
           <p class="option-note" id="options-state">正在读取可用模型与参数…</p>
           <button type="button" id="retry-options" class="text-button" hidden>
             重新读取参数

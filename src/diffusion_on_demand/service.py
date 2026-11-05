@@ -56,7 +56,7 @@ def create_app(config: Config, *, endpoint_file: Path | None = None, endpoint: s
     async def asset(name: str):
         # Explicit assets avoid nested mount root-path ambiguity when Serve
         # strips the prefix before proxying the request.
-        if name not in {"app.js", "style.css"}:
+        if name not in {"app.js", "style.css", "model-presets.json"}:
             raise HTTPException(404, "Asset not found")
         return FileResponse(assets / name, headers={"Cache-Control": "no-cache"})
 

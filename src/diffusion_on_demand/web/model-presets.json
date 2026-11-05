@@ -1,0 +1,65 @@
+{
+  "pony-v6-xl.safetensors": {
+    "label": "Pony Diffusion V6 XL",
+    "source": "https://huggingface.co/AstraliteHeart/pony-diffusion-v6",
+    "artifact": {
+      "url": "https://huggingface.co/AstraliteHeart/pony-diffusion-v6/resolve/5ec9c05863255568f1b59753e3838107befaa712/v6.safetensors",
+      "sha256": "67ab2fd8ec439a89b3fedb15cc65f54336af163c7eb5e4f2acc98f090a29b0b3"
+    },
+    "parameters": {
+      "prompt": "score_9, score_8_up, score_7_up, score_6_up, source_anime, rating_safe, 1girl, solo, long hair, detailed eyes, beautiful face",
+      "negative_prompt": "score_4, score_5, score_6, low quality, worst quality, bad anatomy, bad hands, extra fingers, deformed, blurry, watermark, text",
+      "width": 832,
+      "height": 1216,
+      "steps": 30,
+      "cfg_scale": 6.5,
+      "sampler": "euler_a",
+      "scheduler_options": {},
+      "clip_skip": 0
+    }
+  },
+  "WAI-NSFW-Illustrious-v17.0.safetensors": {
+    "label": "WAI-NSFW-Illustrious v17.0",
+    "source": "https://civitai.com/models/827184?modelVersionId=2883731",
+    "artifact": {
+      "url": "https://civitai.com/api/download/models/2883731?fileId=2763986",
+      "sha256": "f116b0c78ff441467b0cdc8f1936e1ed18ea31e9997c7b132b1b8db533f0bd04"
+    },
+    "parameters": {
+      "prompt": "masterpiece, best quality, amazing quality, general",
+      "negative_prompt": "bad quality, worst quality, worst detail, nsfw",
+      "width": 1024,
+      "height": 1024,
+      "steps": 25,
+      "cfg_scale": 6,
+      "sampler": "euler_a",
+      "scheduler_options": {
+        "prediction_type": "epsilon",
+        "rescale_betas_zero_snr": false
+      },
+      "clip_skip": 0
+    }
+  },
+  "NoobAI-XL-v1.1.safetensors": {
+    "label": "NoobAI-XL 1.1 · ε-pred",
+    "source": "https://huggingface.co/Laxhar/noobai-XL-1.1",
+    "artifact": {
+      "url": "https://huggingface.co/Laxhar/noobai-XL-1.1/resolve/814a274af2b8097c0828819d561ec74c7d0c6cea/NoobAI-XL-v1.1.safetensors",
+      "sha256": "6681e8e4b134c81f16533acedb0d406d7e5e366e1624b4105178c64d00b05d51"
+    },
+    "parameters": {
+      "prompt": "masterpiece, best quality, newest, highres, safe",
+      "negative_prompt": "nsfw, worst quality, low quality, lowres, blurry, text, watermark",
+      "width": 832,
+      "height": 1216,
+      "steps": 28,
+      "cfg_scale": 5.5,
+      "sampler": "euler_a",
+      "scheduler_options": {
+        "prediction_type": "epsilon",
+        "rescale_betas_zero_snr": false
+      },
+      "clip_skip": 0
+    }
+  }
+}

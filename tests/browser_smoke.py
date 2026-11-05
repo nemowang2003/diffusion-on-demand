@@ -27,6 +27,13 @@ def main():
     listener.bind(("127.0.0.1", 0))
     listener.listen()
     port = listener.getsockname()[1]
+    model_directory = tempfile.TemporaryDirectory(prefix="diffusion-browser-models-")
+    for name in (
+        "pony-v6-xl.safetensors",
+        "WAI-NSFW-Illustrious-v17.0.safetensors",
+        "NoobAI-XL-v1.1.safetensors",
+    ):
+        (Path(model_directory.name) / name).touch()
     source = """
 import sys
 import uvicorn
@@ -35,6 +42,7 @@ from diffusion_on_demand.service import create_app
 app = create_app(Config(
     root_path='/diffusion', idle_seconds=0.15,
     worker_command=(sys.executable, sys.argv[2]),
+    model=sys.argv[3]+'/pony-v6-xl.safetensors',
 ))
 async def stripped_proxy(scope, receive, send):
     if scope['type'] == 'http' and scope['path'].startswith('/diffusion'):
@@ -52,6 +60,7 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             source,
             str(listener.fileno()),
             str(Path(__file__).with_name("fake_worker.py").resolve()),
+            model_directory.name,
         ],
         pass_fds=(listener.fileno(),),
         env=env,
@@ -176,6 +185,37 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             expect(page.locator("#history-count")).to_have_text("0")
             page.reload()
             expect(page.locator("#history-empty")).to_be_visible()
+            page.locator("#api-key").fill("browser-test-key")
+            page.locator("#api-key").dispatch_event("change")
+            expect(page.locator("#options-state")).to_contain_text("所有参数")
+            for summary in page.locator(".option-group summary").all():
+                summary.click()
+            page.locator("#prompt").fill("my existing scene")
+            page.locator("#seed").fill("123")
+            page.locator("#option-precision").select_option("float32")
+            page.locator("#option-timesteps").fill("[999,0]")
+            page.locator("#option-model").select_option("NoobAI-XL-v1.1.safetensors")
+            expect(page.locator("#prompt")).to_have_value("my existing scene")
+            expect(page.locator("#apply-model-preset")).to_be_enabled()
+            page.locator("#apply-model-preset").click()
+            expect(page.locator("#cfg")).to_have_value("5.5")
+            expect(page.locator("#steps")).to_have_value("28")
+            expect(page.locator("#prompt")).to_have_value(
+                "masterpiece, best quality, newest, highres, safe"
+            )
+            expect(page.locator("#option-timesteps")).to_have_value("")
+            expect(page.locator("#option-precision")).to_have_value("float32")
+            expect(page.locator("#seed")).to_have_value("123")
+            page.locator("#option-model").select_option("WAI-NSFW-Illustrious-v17.0.safetensors")
+            expect(page.locator("#cfg")).to_have_value("5.5")
+            page.locator("#apply-model-preset").click()
+            expect(page.locator("#cfg")).to_have_value("6")
+            expect(page.locator("#steps")).to_have_value("25")
+            expect(page.locator("#width")).to_have_value("1024")
+            page.locator("#generate").click()
+            expect(page.locator("#history-count")).to_have_text("1")
+            assert payloads[-1]["model"] == "WAI-NSFW-Illustrious-v17.0.safetensors"
+            assert payloads[-1]["scheduler_options"]["prediction_type"] == "epsilon"
             # Upgrade an existing v1 database with >20 records, then paginate
             # and delete records without discarding any older images.
             archive = browser.new_context()
@@ -241,6 +281,12 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             other.add_init_script(
                 "Object.defineProperty(window, 'indexedDB', {get() {throw new Error('denied')}})"
             )
+            other.add_init_script("""
+                const originalFetch = window.fetch.bind(window);
+                window.fetch = (url, init) => String(url).endsWith('/options') && !init?.headers?.Authorization
+                    ? new Promise(resolve => setTimeout(() => resolve(originalFetch(url, init)), 300))
+                    : originalFetch(url, init);
+            """)
             no_storage = other.new_page()
             no_storage.goto(base)
             expect(no_storage.locator("#storage-notice")).to_be_visible()
@@ -259,6 +305,7 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
+        model_directory.cleanup()
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@
 Diffusers / PyTorch 进程。请求共用 FIFO 队列，空闲 30 秒退出推理进程，
 释放模型、CPU 内存和 CUDA 上下文。状态查询不会加载模型。
 
-后端直接加载 Pony Diffusion V6 XL 的 `.safetensors`，无需 Forge。
+后端直接加载 SDXL 单文件 `.safetensors`，无需 Forge。
 这是独立服务，不提供 Forge WebUI、Forge API 协议或 ADetailer 扩展。
 网页默认提示词使用 `rating_safe`，可直接编辑。自动人脸/手部重绘尚未实现。
 
@@ -38,6 +38,28 @@ Diffusers / PyTorch 进程。请求共用 FIFO 队列，空闲 30 秒退出推�
 正向/负向默认文本只存在于网页输入框。后端不追加前缀，不注入负向提示词；API
 调用者应显式传入需要的内容。旧配置中的 `prompt_prefix` / `negative_prompt` 已移除，
 升级时需删除这两个配置键；负向提示词改为每次请求的 `negative_prompt` 字段。
+
+## 模型预设
+
+当前收录以下已固定版本的权重与前端预设，文件放在配置的 `model` 同目录
+（默认 `${XDG_DATA_HOME:-~/.local/share}/diffusion-on-demand/models/`）。
+仅完整校验通过后才使用 `.safetensors` 后缀；下载中使用 `.part`，不进入模型列表。
+
+| 模型 | 本地文件名 | 推荐起点 |
+| --- | --- | --- |
+| [Pony V6 XL](https://huggingface.co/AstraliteHeart/pony-diffusion-v6) | `pony-v6-xl.safetensors` | Euler a，30 步，CFG 6.5，832×1216 |
+| [WAI-NSFW-Illustrious v17.0](https://civitai.com/models/827184?modelVersionId=2883731) | `WAI-NSFW-Illustrious-v17.0.safetensors` | Euler a，25 步，CFG 6，1024×1024 |
+| [NoobAI-XL 1.1 ε-pred](https://huggingface.co/Laxhar/noobai-XL-1.1) | `NoobAI-XL-v1.1.safetensors` | Euler a，28 步，CFG 5.5，832×1216 |
+
+权重下载地址、不可变版本和完整 SHA-256 记录在
+[`web/model-presets.json`](src/diffusion_on_demand/web/model-presets.json)。
+WAI v17.0 于 2026-11-05 核对为作者最新公开版；NoobAI 使用标准 ε-pred 1.1，
+不与需额外 scheduler 设置的 V-pred 1.0 混用。两个新模型均内置 VAE。
+
+前端选择模型后，点击“应用所选模型预设”才会填入提示词、尺寸和采样参数；
+只切换模型不会覆盖正在编辑的内容。预设会清除上一个模型遗留的自定义时间表和 SDXL 条件，
+保留模型选择、GPU、精度、显存策略及 seed。所有值可继续编辑，实际请求仍原样发送至后端。
+只安装权重无需重启服务，刷新网页即可发现新文件；前端代码升级则需更新运行中的服务。
 
 ## 使用
 

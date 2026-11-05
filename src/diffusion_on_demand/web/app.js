@@ -17,7 +17,35 @@ let optionDefinitions = {};
 let optionDefaults = {};
 let optionsReady = false;
 let optionsPending = null;
+let optionsKey = null;
 let restoreOptions = null;
+let modelPresets = {};
+
+const presetsReady = (async () => {
+  try {
+    const response = await fetch(
+      new URL("assets/model-presets.json", document.baseURI),
+      { cache: "no-cache" },
+    );
+    if (!response.ok) throw new Error("Cannot load model presets");
+    modelPresets = await response.json();
+    updateModelPreset();
+  } catch {
+    $("preset-description").textContent =
+      "模型预设暂不可用，仍可手动配置全部参数。";
+  }
+})();
+
+function updateModelPreset() {
+  const selected = document.getElementById("option-model")?.value;
+  const preset = modelPresets[selected];
+  $("apply-model-preset").disabled = !preset;
+  $("apply-model-preset").textContent = preset
+    ? `应用 ${preset.label} 预设`
+    : "此模型暂无预设";
+  $("preset-source").hidden = !preset;
+  if (preset) $("preset-source").href = preset.source;
+}
 
 $("idle-note").textContent =
   `空闲 ${settings.idle_seconds} 秒自动释放模型。下次生成时重新加载。`;
@@ -100,6 +128,7 @@ void pollStatus();
 function setOptionValue(name, value) {
   const input = document.getElementById(`option-${name}`);
   if (!input) return;
+  input.setCustomValidity("");
   if (
     input.tagName === "SELECT" &&
     value != null &&
@@ -123,7 +152,13 @@ function setOptionValue(name, value) {
 }
 
 async function loadOptions() {
-  if (optionsPending) return optionsPending;
+  const key = $("api-key").value.trim();
+  if (optionsPending) {
+    const pendingKey = optionsKey;
+    const result = await optionsPending;
+    return pendingKey === key ? result : loadOptions();
+  }
+  optionsKey = key;
   optionsPending = (async () => {
     try {
       const response = await api("options", {
@@ -170,6 +205,8 @@ async function loadOptions() {
         input.id = `option-${name}`;
         input.dataset.nullable = String(nullable);
         input.dataset.option = name;
+        if (name === "model")
+          input.addEventListener("change", updateModelPreset);
         input.addEventListener("invalid", () => {
           group.open = true;
         });
@@ -206,6 +243,7 @@ async function loadOptions() {
         setOptionValue(name, restoreOptions?.[name] ?? optionDefaults[name]);
       }
       optionsReady = true;
+      updateModelPreset();
       restoreOptions = null;
       $("options-state").textContent =
         "所有参数随本次请求提交，并保存到历史记录。";
@@ -270,6 +308,28 @@ $("size").addEventListener("change", () => {
 });
 for (const name of ["width", "height"])
   $(name).addEventListener("input", syncSizePreset);
+
+$("apply-model-preset").addEventListener("click", async () => {
+  await presetsReady;
+  const preset = modelPresets[$("option-model")?.value];
+  if (!preset) return;
+  // Reset generation-only advanced conditions so custom timesteps or SDXL
+  // conditioning from a previous model cannot silently override this preset.
+  for (const [name, definition] of Object.entries(optionDefinitions)) {
+    if (definition.group && definition.group !== "模型与显存") {
+      setOptionValue(name, preset.parameters[name] ?? optionDefaults[name]);
+    }
+  }
+  $("prompt").value = preset.parameters.prompt;
+  $("negative-prompt").value = preset.parameters.negative_prompt;
+  $("width").value = preset.parameters.width;
+  $("height").value = preset.parameters.height;
+  $("steps").value = preset.parameters.steps;
+  $("cfg").value = preset.parameters.cfg_scale;
+  syncSizePreset();
+  $("preset-description").textContent =
+    `已将 ${preset.label} 预设填入输入框，可继续编辑。预设不加载模型。`;
+});
 
 function storageNotice(message) {
   $("storage-notice").textContent = message;
@@ -367,6 +427,7 @@ function showRecord(record, restore = false) {
         if (definition.group)
           setOptionValue(name, record.params[name] ?? optionDefaults[name]);
       }
+      updateModelPreset();
     }
   }
 }
@@ -505,17 +566,16 @@ $("generate-form").addEventListener("submit", async (event) => {
     showRecord(record);
     records.unshift(record);
     historyTotal += 1;
-    renderHistory();
     if (database) {
       try {
         historyTotal = Math.max(await updateHistory(record), records.length);
-        renderHistory();
       } catch {
         storageNotice(
           "图片已生成，但本地历史保存失败（可能空间不足）。请先下载图片；本次结果仅在当前页面保留。",
         );
       }
     }
+    renderHistory();
   } catch (error) {
     $("error").textContent =
       error instanceof TypeError

@@ -577,6 +577,22 @@ dialog p {
 .option-group label {
   margin-top: 16px;
 }
+#advanced-parameters > summary {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+#model-selection {
+  margin-bottom: 12px;
+}
+.model-preset {
+  margin-bottom: 24px;
+}
+.model-preset .button {
+  width: 100%;
+  white-space: normal;
+}
 .option-group input[type="checkbox"] {
   display: block;
   width: 20px;

@@ -6,7 +6,7 @@ Diffusers / PyTorch 进程。请求共用 FIFO 队列，空闲 30 秒退出推�
 
 后端直接加载 SDXL 单文件 `.safetensors`，无需 Forge。
 这是独立服务，不提供 Forge WebUI、Forge API 协议或 ADetailer 扩展。
-网页默认提示词使用 `rating_safe`，可直接编辑。自动人脸/手部重绘尚未实现。
+默认使用 WAI v17，网页提示词可直接编辑。自动人脸/手部重绘尚未实现。
 
 ## 网页生图
 
@@ -16,6 +16,8 @@ Diffusers / PyTorch 进程。请求共用 FIFO 队列，空闲 30 秒退出推�
 网页使用该路径下的同源 API；随机监听端口由服务发布脚本交给代理，前端无需知道端口。
 
 - 可编辑正向/负向提示词、自定义尺寸、步数、CFG 和种子，返回实际 seed。
+- 模型选择与“为所选模型生成默认提示词”按钮位于画面描述之前；除画面描述和生成按钮外，
+  其余控制项收纳在默认折叠的“高级参数”中。需要填写凭据或修正无效参数时会自动展开。
 - “模型与显存”“采样设置”“SDXL 条件”由后端参数定义生成，涵盖可用模型、卸载策略、
   模型/VAE 精度、GPU 编号、VAE 切片/分块、注意力切片、采样器及其高级 JSON 配置、
   CFG rescale、额外 CLIP skip、DDIM eta、自定义 timesteps/sigmas、去噪结束比例、随机数
@@ -31,6 +33,10 @@ Diffusers / PyTorch 进程。请求共用 FIFO 队列，空闲 30 秒退出推�
   历史保存在访问设备的浏览器中，不在服务端保存，不同步至其他设备或浏览器；
   实际容量取决于浏览器存储配额，隐私模式、存储限制或清理站点数据会影响保留。
   保存失败时仍可下载当次结果。请自行下载需要长期保留的图片。
+  删除历史会删除 IndexedDB 中包含图片 Blob 的记录，并释放预览/缩略图的 Object URL；
+  浏览器负责随后回收内存和整理磁盘，页面无法保证立即物理擦除。
+  `blob:https://<host>/…` 是访问设备浏览器中的临时地址，域名表示创建来源，不代表服务器文件。
+  手动下载的 PNG 是独立文件，不随历史删除。
 - 页面与状态查询不会加载模型或延长闲置时间；生成结束空闲 30 秒后仍会卸载模型。
   页面、预览与本地历史不受模型卸载影响。下一次生成会等待模型重新加载。
 - 开启鉴权时在“连接凭据”输入 API key，仅保存在页面内存中，不写入历史或浏览器存储。
@@ -47,18 +53,20 @@ Diffusers / PyTorch 进程。请求共用 FIFO 队列，空闲 30 秒退出推�
 
 | 模型 | 本地文件名 | 推荐起点 |
 | --- | --- | --- |
-| [Pony V6 XL](https://huggingface.co/AstraliteHeart/pony-diffusion-v6) | `pony-v6-xl.safetensors` | Euler a，30 步，CFG 6.5，832×1216 |
 | [WAI-NSFW-Illustrious v17.0](https://civitai.com/models/827184?modelVersionId=2883731) | `WAI-NSFW-Illustrious-v17.0.safetensors` | Euler a，25 步，CFG 6，1024×1024 |
 | [NoobAI-XL 1.1 ε-pred](https://huggingface.co/Laxhar/noobai-XL-1.1) | `NoobAI-XL-v1.1.safetensors` | Euler a，28 步，CFG 5.5，832×1216 |
+| [NoobAI-XL V-pred 1.0](https://huggingface.co/Laxhar/noobai-XL-Vpred-1.0) | `NoobAI-XL-Vpred-v1.0.safetensors` | Euler，30 步，CFG 5，832×1216 |
 
 权重下载地址、不可变版本和完整 SHA-256 记录在
 [`web/model-presets.json`](src/diffusion_on_demand/web/model-presets.json)。
-WAI v17.0 于 2026-11-05 核对为作者最新公开版；NoobAI 使用标准 ε-pred 1.1，
-不与需额外 scheduler 设置的 V-pred 1.0 混用。两个新模型均内置 VAE。
+WAI v17.0 于 2026-11-05 核对为作者最新公开版。NoobAI 的 ε-pred 1.1 与 V-pred 1.0
+是独立模型；V-pred 必须使用 Euler、`prediction_type="v_prediction"` 和
+`rescale_betas_zero_snr=true`。三者均内置 VAE。
 
-前端选择模型后，点击“应用所选模型预设”才会填入提示词、尺寸和采样参数；
-只切换模型不会覆盖正在编辑的内容。预设会清除上一个模型遗留的自定义时间表和 SDXL 条件，
-保留模型选择、GPU、精度、显存策略及 seed。所有值可继续编辑，实际请求仍原样发送至后端。
+切换模型会采用其推荐尺寸和采样参数，清除上一个模型遗留的时间表和 SDXL 条件，
+保留正在编辑的提示词、GPU、精度、显存策略及 seed；历史恢复则使用保存的完整参数。
+“为所选模型生成默认提示词”按钮只替换正向和负向文本，不修改其他参数。
+所有值均可继续编辑，实际请求原样发送至后端。直接使用 API 调用 V-pred 时需显式传入上述设置。
 只安装权重无需重启服务，刷新网页即可发现新文件；前端代码升级则需更新运行中的服务。
 
 ## 使用
@@ -66,16 +74,15 @@ WAI v17.0 于 2026-11-05 核对为作者最新公开版；NoobAI 使用标准 ε
 目标平台：x86_64 Linux + NVIDIA CUDA，包括 NixOS WSL。
 
 ```sh
-# 默认模型位于 ~/.local/share/diffusion-on-demand/models/pony-v6-xl.safetensors
+# 默认模型位于 ~/.local/share/diffusion-on-demand/models/WAI-NSFW-Illustrious-v17.0.safetensors
 nix run . -- download-model
 # WSL 使用驱动路径适配过的包：
 nix build .#wsl
 ```
 
-下载器固定 Civitai model 257749 / version 290640 / file 228616，
-只接受 SHA-256 为 `67ab2fd8ec439a89b3fedb15cc65f54336af163c7eb5e4f2acc98f090a29b0b3`
-的文件。优先 Civitai；401/403 时使用作者 AstraliteHeart 在 Hugging Face 的
-相同文件镜像，固定 revision。可通过 `CIVITAI_TOKEN` 提供凭据。
+下载器按配置的模型文件名匹配 `model-presets.json` 中固定的 URL 与 SHA-256，
+支持上述三种模型，不接受未登记的下载目标。默认下载 WAI v17。可通过 `CIVITAI_TOKEN`
+为 Civitai 提供凭据；该凭据不会发送给 Hugging Face 或重定向后的 CDN。
 模型不放入 Git 或 Nix store；手动下载后可用 `verify-model` 校验。
 下载需要约 6.94 GB 空间；失败时清理临时文件，不覆盖已有文件。
 
@@ -163,7 +170,7 @@ JSON Schema、当前可用模型和主机默认模型/卸载策略，不加载�
       driverPath = "/usr/lib/wsl/lib:/run/opengl-driver/lib"; # WSL
     };
     settings = {
-      model = "${config.xdg.dataHome}/diffusion-on-demand/models/pony-v6-xl.safetensors";
+      model = "${config.xdg.dataHome}/diffusion-on-demand/models/WAI-NSFW-Illustrious-v17.0.safetensors";
       auth_required = false; # 入口由 Tailnet 控制时
       idle_seconds = 30;
       offload = "model";

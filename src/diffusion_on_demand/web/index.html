@@ -30,6 +30,19 @@
         <h1 id="create-title">把想象，变成画面。</h1>
         <p class="intro">SDXL <span>·</span> 按需加载 · 文字生成图片</p>
         <form id="generate-form">
+          <div id="model-selection">
+            <p class="option-note">正在读取模型…</p>
+          </div>
+          <div class="model-preset">
+            <button
+              type="button"
+              id="apply-model-preset"
+              class="button"
+              disabled
+            >
+              为所选模型生成默认提示词
+            </button>
+          </div>
           <label for="prompt"
             >画面描述 <span class="label-note">英文提示词效果更好</span></label
           >
@@ -41,107 +54,11 @@
             rows="6"
             placeholder="描述人物、场景、光线和风格…"
           >
-score_9, score_8_up, score_7_up, score_6_up, source_anime, rating_safe, 1girl, solo, long hair, detailed eyes, beautiful face</textarea>
-          <button type="button" id="example" class="text-button">
-            试试雪中庭院 ↗
-          </button>
-          <label for="negative-prompt" class="negative-label"
-            >负向提示词 <span class="label-note">可修改或清空</span></label
-          >
-          <textarea
-            id="negative-prompt"
-            name="negative_prompt"
-            maxlength="4000"
-            rows="3"
-            placeholder="不希望出现在画面中的内容…"
-          >
-score_4, score_5, score_6, low quality, worst quality, bad anatomy, bad hands, extra fingers, deformed, blurry, watermark, text</textarea>
-          <div class="section-label">画面设置</div>
-          <label for="size">尺寸</label>
-          <select id="size">
-            <option value="832x1216">竖幅 · 832 × 1216</option>
-            <option value="1024x1024">方形 · 1024 × 1024</option>
-            <option value="1216x832">横幅 · 1216 × 832</option>
-            <option value="768x1024">轻量竖幅 · 768 × 1024</option>
-            <option value="custom">自定义尺寸</option>
-          </select>
-          <div class="field-row">
-            <div>
-              <label for="width">宽度</label
-              ><input
-                id="width"
-                type="number"
-                min="64"
-                max="8192"
-                step="8"
-                value="832"
-                required
-              />
-            </div>
-            <div>
-              <label for="height">高度</label
-              ><input
-                id="height"
-                type="number"
-                min="64"
-                max="8192"
-                step="8"
-                value="1216"
-                required
-              />
-            </div>
-          </div>
-          <div class="field-row">
-            <div>
-              <label for="steps">步数</label
-              ><input
-                id="steps"
-                type="number"
-                min="1"
-                max="1000"
-                step="1"
-                value="30"
-                required
-              />
-            </div>
-            <div>
-              <label for="cfg">提示词引导 CFG</label
-              ><input
-                id="cfg"
-                type="number"
-                min="0"
-                max="100"
-                step="0.1"
-                value="6.5"
-                required
-              />
-            </div>
-          </div>
-          <label for="seed"
-            >种子 <span class="label-note">−1 为随机</span></label
-          >
-          <input
-            id="seed"
-            type="number"
-            min="-1"
-            max="4294967295"
-            step="1"
-            value="-1"
-            required
-          />
-          <div id="generation-options" aria-live="polite"></div>
-          <div class="model-preset">
-            <button
-              type="button"
-              id="apply-model-preset"
-              class="button"
-              disabled
-            >
-              应用所选模型预设
-            </button>
+masterpiece, best quality, amazing quality, general</textarea>
+          <details id="advanced-parameters">
+            <summary>高级参数</summary>
             <p class="option-note" id="preset-description">
-              预设会替换提示词和采样参数，可继续编辑；GPU、精度、显存策略与 seed
-              保持当前选择。
+              按钮只替换正向和负向提示词。切换模型会采用其推荐采样参数，可在这里继续调整。
             </p>
             <a
               id="preset-source"
@@ -151,30 +68,121 @@ score_4, score_5, score_6, low quality, worst quality, bad anatomy, bad hands, e
               hidden
               >模型说明 ↗</a
             >
-          </div>
-          <p class="option-note" id="options-state">正在读取可用模型与参数…</p>
-          <button type="button" id="retry-options" class="text-button" hidden>
-            重新读取参数
-          </button>
-          <p class="option-note">
-            修改模型、精度或显存设置会在排队轮到本次生成时重新加载模型。其他请求继续按各自参数执行。
-          </p>
-          <details id="auth-details" class="auth">
-            <summary>连接凭据</summary>
-            <label for="api-key"
-              >API key <span class="label-note">仅用于本页，不保存</span></label
-            ><input
-              id="api-key"
-              type="password"
-              autocomplete="off"
-              placeholder="当前 Tailnet 配置无需填写"
+            <button type="button" id="example" class="text-button">
+              试试雪中庭院 ↗
+            </button>
+            <label for="negative-prompt" class="negative-label"
+              >负向提示词 <span class="label-note">可修改或清空</span></label
+            >
+            <textarea
+              id="negative-prompt"
+              name="negative_prompt"
+              maxlength="4000"
+              rows="3"
+              placeholder="不希望出现在画面中的内容…"
+            >
+bad quality, worst quality, worst detail, nsfw</textarea>
+            <div class="section-label">画面设置</div>
+            <label for="size">尺寸</label>
+            <select id="size">
+              <option value="832x1216">竖幅 · 832 × 1216</option>
+              <option value="1024x1024">方形 · 1024 × 1024</option>
+              <option value="1216x832">横幅 · 1216 × 832</option>
+              <option value="768x1024">轻量竖幅 · 768 × 1024</option>
+              <option value="custom">自定义尺寸</option>
+            </select>
+            <div class="field-row">
+              <div>
+                <label for="width">宽度</label
+                ><input
+                  id="width"
+                  type="number"
+                  min="64"
+                  max="8192"
+                  step="8"
+                  value="832"
+                  required
+                />
+              </div>
+              <div>
+                <label for="height">高度</label
+                ><input
+                  id="height"
+                  type="number"
+                  min="64"
+                  max="8192"
+                  step="8"
+                  value="1216"
+                  required
+                />
+              </div>
+            </div>
+            <div class="field-row">
+              <div>
+                <label for="steps">步数</label
+                ><input
+                  id="steps"
+                  type="number"
+                  min="1"
+                  max="1000"
+                  step="1"
+                  value="30"
+                  required
+                />
+              </div>
+              <div>
+                <label for="cfg">提示词引导 CFG</label
+                ><input
+                  id="cfg"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  value="6.5"
+                  required
+                />
+              </div>
+            </div>
+            <label for="seed"
+              >种子 <span class="label-note">−1 为随机</span></label
+            >
+            <input
+              id="seed"
+              type="number"
+              min="-1"
+              max="4294967295"
+              step="1"
+              value="-1"
+              required
             />
+            <div id="generation-options" aria-live="polite"></div>
+            <p class="option-note" id="options-state">
+              正在读取可用模型与参数…
+            </p>
+            <button type="button" id="retry-options" class="text-button" hidden>
+              重新读取参数
+            </button>
+            <p class="option-note">
+              修改模型、精度或显存设置会在排队轮到本次生成时重新加载模型。其他请求继续按各自参数执行。
+            </p>
+            <details id="auth-details" class="auth">
+              <summary>连接凭据</summary>
+              <label for="api-key"
+                >API key
+                <span class="label-note">仅用于本页，不保存</span></label
+              ><input
+                id="api-key"
+                type="password"
+                autocomplete="off"
+                placeholder="当前 Tailnet 配置无需填写"
+              />
+            </details>
+            <p class="idle-note" id="idle-note"></p>
           </details>
           <button id="generate" class="primary" type="submit">
             <span id="generate-label">生成图片</span
             ><span aria-hidden="true">↗</span>
           </button>
-          <p class="idle-note" id="idle-note"></p>
         </form>
       </section>
       <section class="canvas-panel" aria-labelledby="preview-title">

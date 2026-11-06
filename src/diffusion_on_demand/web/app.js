@@ -40,9 +40,7 @@ function updateModelPreset() {
   const selected = document.getElementById("option-model")?.value;
   const preset = modelPresets[selected];
   $("apply-model-preset").disabled = !preset;
-  $("apply-model-preset").textContent = preset
-    ? `应用 ${preset.label} 预设`
-    : "此模型暂无预设";
+  $("apply-model-preset").textContent = "为所选模型生成默认提示词";
   $("preset-source").hidden = !preset;
   if (preset) $("preset-source").href = preset.source;
 }
@@ -51,6 +49,7 @@ $("idle-note").textContent =
   `空闲 ${settings.idle_seconds} 秒自动释放模型。下次生成时重新加载。`;
 if (settings.auth_required) {
   $("auth-details").open = true;
+  $("advanced-parameters").open = true;
   $("api-key").placeholder = "此服务需要 API key";
   $("api-key").required = true;
 }
@@ -125,6 +124,32 @@ document.addEventListener("visibilitychange", pollStatus);
 $("api-key").addEventListener("change", pollStatus);
 void pollStatus();
 
+function revealControl(input) {
+  for (let node = input.parentElement; node; node = node.parentElement) {
+    if (node.tagName === "DETAILS") node.open = true;
+  }
+}
+$("generate-form").addEventListener(
+  "invalid",
+  (event) => revealControl(event.target),
+  true,
+);
+
+function applyModelParameters() {
+  const preset = modelPresets[document.getElementById("option-model")?.value];
+  if (!preset) return;
+  for (const [name, definition] of Object.entries(optionDefinitions)) {
+    if (definition.group && definition.group !== "模型与显存") {
+      setOptionValue(name, preset.parameters[name] ?? optionDefaults[name]);
+    }
+  }
+  $("width").value = preset.parameters.width;
+  $("height").value = preset.parameters.height;
+  $("steps").value = preset.parameters.steps;
+  $("cfg").value = preset.parameters.cfg_scale;
+  syncSizePreset();
+}
+
 function setOptionValue(name, value) {
   const input = document.getElementById(`option-${name}`);
   if (!input) return;
@@ -175,9 +200,13 @@ async function loadOptions() {
       );
       const groups = new Map();
       $("generation-options").replaceChildren();
+      $("model-selection").replaceChildren();
       for (const [name, definition] of Object.entries(optionDefinitions)) {
         if (!definition.group) continue;
-        let group = groups.get(definition.group);
+        let group =
+          name === "model"
+            ? $("model-selection")
+            : groups.get(definition.group);
         if (!group) {
           group = document.createElement("details");
           group.className = "option-group";
@@ -206,9 +235,12 @@ async function loadOptions() {
         input.dataset.nullable = String(nullable);
         input.dataset.option = name;
         if (name === "model")
-          input.addEventListener("change", updateModelPreset);
+          input.addEventListener("change", () => {
+            applyModelParameters();
+            updateModelPreset();
+          });
         input.addEventListener("invalid", () => {
-          group.open = true;
+          revealControl(input);
         });
         if (choices) {
           for (const value of choices) {
@@ -234,7 +266,7 @@ async function loadOptions() {
         label.htmlFor = input.id;
         label.textContent = definition.title;
         group.append(label, input);
-        if (definition.description) {
+        if (definition.description && name !== "model") {
           const note = document.createElement("p");
           note.className = "option-note";
           note.textContent = definition.description;
@@ -243,6 +275,8 @@ async function loadOptions() {
         setOptionValue(name, restoreOptions?.[name] ?? optionDefaults[name]);
       }
       optionsReady = true;
+      await presetsReady;
+      if (!restoreOptions) applyModelParameters();
       updateModelPreset();
       restoreOptions = null;
       $("options-state").textContent =
@@ -252,6 +286,7 @@ async function loadOptions() {
     } catch (error) {
       $("options-state").textContent = error.message;
       $("retry-options").hidden = false;
+      $("advanced-parameters").open = true;
       return false;
     } finally {
       optionsPending = null;
@@ -279,7 +314,7 @@ function readOptionValues() {
                   : input.value;
     } catch {
       input.setCustomValidity("请输入有效 JSON");
-      input.closest("details").open = true;
+      revealControl(input);
       input.reportValidity();
       throw new Error("高级参数中有无效 JSON，请修正后重试。");
     }
@@ -313,22 +348,10 @@ $("apply-model-preset").addEventListener("click", async () => {
   await presetsReady;
   const preset = modelPresets[$("option-model")?.value];
   if (!preset) return;
-  // Reset generation-only advanced conditions so custom timesteps or SDXL
-  // conditioning from a previous model cannot silently override this preset.
-  for (const [name, definition] of Object.entries(optionDefinitions)) {
-    if (definition.group && definition.group !== "模型与显存") {
-      setOptionValue(name, preset.parameters[name] ?? optionDefaults[name]);
-    }
-  }
   $("prompt").value = preset.parameters.prompt;
   $("negative-prompt").value = preset.parameters.negative_prompt;
-  $("width").value = preset.parameters.width;
-  $("height").value = preset.parameters.height;
-  $("steps").value = preset.parameters.steps;
-  $("cfg").value = preset.parameters.cfg_scale;
-  syncSizePreset();
   $("preset-description").textContent =
-    `已将 ${preset.label} 预设填入输入框，可继续编辑。预设不加载模型。`;
+    `已填入 ${preset.label} 的默认提示词，可继续编辑；未修改其他参数。`;
 });
 
 function storageNotice(message) {
@@ -582,8 +605,7 @@ $("generate-form").addEventListener("submit", async (event) => {
         ? "连接中断或服务不可用，请检查 Tailscale 连接。请求可能仍在服务器执行，可留意右上角状态后再重试。"
         : error.message;
     $("error").hidden = false;
-    if ($("error").textContent.includes("API key"))
-      $("auth-details").open = true;
+    if ($("error").textContent.includes("API key")) revealControl($("api-key"));
   } finally {
     clearInterval(timer);
     generating = false;

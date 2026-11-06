@@ -4,6 +4,7 @@ Run with Chromium on PATH:
     nix develop --command uv run --locked --with playwright python tests/browser_smoke.py
 """
 
+import json
 import os
 import shutil
 import socket
@@ -29,7 +30,7 @@ def main():
     port = listener.getsockname()[1]
     model_directory = tempfile.TemporaryDirectory(prefix="diffusion-browser-models-")
     for name in (
-        "pony-v6-xl.safetensors",
+        "NoobAI-XL-Vpred-v1.0.safetensors",
         "WAI-NSFW-Illustrious-v17.0.safetensors",
         "NoobAI-XL-v1.1.safetensors",
     ):
@@ -42,7 +43,7 @@ from diffusion_on_demand.service import create_app
 app = create_app(Config(
     root_path='/diffusion', idle_seconds=0.15,
     worker_command=(sys.executable, sys.argv[2]),
-    model=sys.argv[3]+'/pony-v6-xl.safetensors',
+    model=sys.argv[3]+'/WAI-NSFW-Illustrious-v17.0.safetensors',
 ))
 async def stripped_proxy(scope, receive, send):
     if scope['type'] == 'http' and scope['path'].startswith('/diffusion'):
@@ -93,12 +94,21 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             )
             # Deliberately omit the trailing slash to exercise proxy-prefix URLs.
             page.goto(base.rstrip("/"))
-            expect(page.locator("#prompt")).to_contain_text("score_9")
+            expect(page.locator("#prompt")).to_contain_text("masterpiece")
             page.locator("#api-key").fill("browser-test-key")
             page.locator("#api-key").dispatch_event("change")
             expect(page.locator("#model-status")).to_have_text("模型已释放 · 随时可用")
             expect(page.locator("#options-state")).to_contain_text("所有参数")
+            page.locator("#advanced-parameters").evaluate("node => node.open = false")
+            expect(page.locator("#option-model")).to_be_visible()
+            expect(page.locator("#apply-model-preset")).to_be_visible()
+            expect(page.locator("#negative-prompt")).to_be_hidden()
+            expect(page.locator("#steps")).to_be_hidden()
+            assert page.locator("#option-model").evaluate(
+                "node => Boolean(node.compareDocumentPosition(document.getElementById('prompt')) & Node.DOCUMENT_POSITION_FOLLOWING)"
+            )
             page.screenshot(path="/tmp/diffusion-web-desktop.png", full_page=True)
+            page.locator("#advanced-parameters > summary").click()
             for summary in page.locator(".option-group summary").all():
                 summary.click()
             page.locator("#option-precision").select_option("float32")
@@ -115,11 +125,12 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             page.locator("#prompt").fill("a quiet forest")
             page.locator("#negative-prompt").fill("")
             page.locator("#seed").fill("42")
+            assert not payloads, payloads
             page.locator("#generate").click()
             expect(page.locator("#history-count")).to_have_text("1")
             expect(page.locator("#preview")).to_be_visible()
             assert page.locator("#preview").evaluate("img => img.complete && img.naturalWidth > 0")
-            assert payloads[-1]["prompt"] == "a quiet forest"
+            assert payloads[-1]["prompt"] == "a quiet forest", payloads[-1]
             assert payloads[-1]["negative_prompt"] == ""
             assert payloads[-1]["precision"] == "float32"
             assert payloads[-1]["offload"] == "sequential"
@@ -206,9 +217,27 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             expect(page.locator("#option-timesteps")).to_have_value("")
             expect(page.locator("#option-precision")).to_have_value("float32")
             expect(page.locator("#seed")).to_have_value("123")
-            page.locator("#option-model").select_option("WAI-NSFW-Illustrious-v17.0.safetensors")
-            expect(page.locator("#cfg")).to_have_value("5.5")
+            page.locator("#option-model").select_option("NoobAI-XL-Vpred-v1.0.safetensors")
+            expect(page.locator("#option-sampler")).to_have_value("euler")
+            assert (
+                json.loads(page.locator("#option-scheduler_options").input_value())[
+                    "prediction_type"
+                ]
+                == "v_prediction"
+            )
+            assert (
+                json.loads(page.locator("#option-scheduler_options").input_value())[
+                    "rescale_betas_zero_snr"
+                ]
+                is True
+            )
             page.locator("#apply-model-preset").click()
+            page.locator("#option-model").select_option("WAI-NSFW-Illustrious-v17.0.safetensors")
+            expect(page.locator("#cfg")).to_have_value("6")
+            page.locator("#steps").fill("42")
+            page.locator("#apply-model-preset").click()
+            expect(page.locator("#steps")).to_have_value("42")
+            page.locator("#steps").fill("25")
             expect(page.locator("#cfg")).to_have_value("6")
             expect(page.locator("#steps")).to_have_value("25")
             expect(page.locator("#width")).to_have_value("1024")
@@ -259,10 +288,26 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             archive_page.locator(".history-delete").first.click()
             archive_page.locator("#cancel-clear").click()
             expect(archive_page.locator("#history-count")).to_have_text("61")
+            deleted_url = archive_page.locator("#preview").get_attribute("src")
+            deleted_thumbnail = archive_page.locator(".history-card img").first.get_attribute("src")
             archive_page.locator(".history-delete").first.click()
             archive_page.locator("#confirm-clear").click()
             expect(archive_page.locator("#history-count")).to_have_text("60")
             expect(archive_page.locator("#download")).to_be_hidden()
+            for url in (deleted_url, deleted_thumbnail):
+                assert archive_page.evaluate(
+                    "async url => {try {await fetch(url); return false} catch {return true}}", url
+                )
+            assert archive_page.evaluate("""async () => {
+                const db = await new Promise(resolve => {
+                    const r = indexedDB.open('diffusion-history:/diffusion/');
+                    r.onsuccess = () => resolve(r.result);
+                });
+                return await new Promise(resolve => {
+                    const r = db.transaction('images').objectStore('images').get('old-060');
+                    r.onsuccess = () => { db.close(); resolve(r.result === undefined); };
+                });
+            }""")
             archive_page.locator("#api-key").fill("browser-test-key")
             archive_page.locator("#prompt").fill("new image after old history")
             archive_page.locator("#generate").click()

@@ -102,7 +102,7 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             page.locator("#advanced-parameters").evaluate("node => node.open = false")
             expect(page.locator("#option-model")).to_be_visible()
             expect(page.locator("#apply-model-preset")).to_be_visible()
-            expect(page.locator("#negative-prompt")).to_be_hidden()
+            expect(page.locator("#negative-prompt")).to_be_visible()
             expect(page.locator("#steps")).to_be_hidden()
             assert page.locator("#option-model").evaluate(
                 "node => Boolean(node.compareDocumentPosition(document.getElementById('prompt')) & Node.DOCUMENT_POSITION_FOLLOWING)"
@@ -144,7 +144,8 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             with tempfile.TemporaryDirectory() as directory:
                 target = Path(directory) / "image.png"
                 download.value.save_as(target)
-                assert target.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+                png = target.read_bytes()
+                assert png.startswith(b"\x89PNG\r\n\x1a\n")
             page.reload()
             expect(page.locator("#history-count")).to_have_text("1")
             page.locator(".history-open").click()
@@ -190,7 +191,7 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             page.screenshot(path="/tmp/diffusion-web-mobile.png", full_page=True)
             page.locator("#clear-history").click()
             page.locator("#cancel-clear").click()
-            expect(page.locator("#history-count")).to_have_text("1")
+            expect(page.locator("#history-count")).to_have_text("3")
             page.locator("#clear-history").click()
             page.locator("#confirm-clear").click()
             expect(page.locator("#history-count")).to_have_text("0")
@@ -243,6 +244,7 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             expect(page.locator("#width")).to_have_value("1024")
             page.locator("#generate").click()
             expect(page.locator("#history-count")).to_have_text("1")
+            expect(page.locator("#preview")).to_be_visible()
             assert payloads[-1]["model"] == "WAI-NSFW-Illustrious-v17.0.safetensors"
             assert payloads[-1]["scheduler_options"]["prediction_type"] == "epsilon"
             # Upgrade an existing v1 database with >20 records, then paginate
@@ -312,6 +314,7 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             archive_page.locator("#prompt").fill("new image after old history")
             archive_page.locator("#generate").click()
             expect(archive_page.locator("#history-count")).to_have_text("61")
+            expect(archive_page.locator("#preview")).to_be_visible()
             archive_page.reload()
             expect(archive_page.locator("#history-count")).to_have_text("61")
             # Other images survive reload, and deleting one does not hide the
@@ -321,6 +324,76 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             expect(archive_page.locator("#history-count")).to_have_text("60")
             expect(archive_page.locator("#download")).to_be_visible()
             archive.close()
+            # Hold independent responses to verify concurrent submission and
+            # selection, including deletion before a result arrives.
+            jobs_context = browser.new_context()
+            jobs_page = jobs_context.new_page()
+            jobs_page.on("pageerror", lambda error: errors.append(str(error)))
+            held = []
+            jobs_page.route("**/generate", lambda route: held.append(route))
+            jobs_page.goto(base)
+            jobs_page.locator("#api-key").fill("browser-test-key")
+            jobs_page.locator("#api-key").dispatch_event("change")
+            expect(jobs_page.locator("#options-state")).to_contain_text("所有参数")
+
+            def submit(prompt, count):
+                jobs_page.locator("#prompt").fill(prompt)
+                jobs_page.locator("#generate").click()
+                expect(jobs_page.locator("#history-count")).to_have_text(str(count))
+                expect(jobs_page.locator("#generate")).to_be_enabled()
+                expect(jobs_page.locator("#working")).to_be_visible()
+                deadline = time.monotonic() + 5
+                while len(held) < count:
+                    jobs_page.wait_for_timeout(20)
+                    assert time.monotonic() < deadline
+                assert held[-1].request.post_data_json["prompt"] == prompt
+
+            submit("first completed", 1)
+            held[0].fulfill(body=png, content_type="image/png", headers={"X-Seed": "123"})
+            expect(jobs_page.locator("#preview")).to_be_visible()
+            submit("request A", 2)
+            submit("request B", 3)
+            expect(jobs_page.locator('.history-card[data-status="pending"]')).to_have_count(2)
+            jobs_page.locator(".history-open").nth(2).click()
+            expect(jobs_page.locator("#working")).to_be_hidden()
+            old_url = jobs_page.locator("#preview").get_attribute("src")
+            held[1].fulfill(body=png, content_type="image/png", headers={"X-Seed": "234"})
+            expect(jobs_page.locator('.history-card[data-status="completed"]')).to_have_count(2)
+            assert jobs_page.locator("#preview").get_attribute("src") == old_url
+            jobs_page.locator(".history-open").first.click()
+            expect(jobs_page.locator("#working")).to_be_visible()
+            expect(jobs_page.locator("#prompt")).to_have_value("request B")
+            held[2].fulfill(status=500, json={"detail": "failed B"})
+            expect(jobs_page.locator("#error")).to_contain_text("failed B")
+            expect(jobs_page.locator("#working")).to_be_hidden()
+            jobs_page.locator(".history-open").nth(1).click()
+            expect(jobs_page.locator("#error")).to_be_hidden()
+            expect(jobs_page.locator("#preview")).to_be_visible()
+            submit("delete while pending", 4)
+            deleted_id = jobs_page.locator(".history-card").first.get_attribute("data-record-id")
+            jobs_page.locator(".history-delete").first.click()
+            jobs_page.locator("#confirm-clear").click()
+            expect(jobs_page.locator("#history-count")).to_have_text("3")
+            held[3].fulfill(body=png, content_type="image/png")
+            jobs_page.wait_for_function("activeJobs.size === 0")
+            expect(jobs_page.locator("#history-count")).to_have_text("3")
+            assert jobs_page.evaluate(
+                """async id => {
+                const db = await new Promise(resolve => {
+                    const r = indexedDB.open('diffusion-history:/diffusion/');
+                    r.onsuccess = () => resolve(r.result);
+                });
+                return await new Promise(resolve => {
+                    const r = db.transaction('images').objectStore('images').get(id);
+                    r.onsuccess = () => { db.close(); resolve(r.result === undefined); };
+                });
+            }""",
+                deleted_id,
+            )
+            jobs_page.reload()
+            expect(jobs_page.locator("#history-count")).to_have_text("3")
+            expect(jobs_page.locator('.history-card[data-status="completed"]')).to_have_count(2)
+            jobs_context.close()
             # Storage denial must not prevent generation and download.
             other = browser.new_context()
             other.add_init_script(
@@ -341,7 +414,7 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             assert not errors, errors
             browser.close()
         print(
-            "Browser checks passed: proxy prefix, generation, exact prompts, PNG download, history, auth, errors, mobile layout and storage denial."
+            "Browser checks passed: proxy prefix, generation, exact prompts, PNG download, history, concurrent requests, selection, in-flight deletion, auth, errors, mobile layout and storage denial."
         )
     finally:
         process.terminate()

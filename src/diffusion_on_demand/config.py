@@ -10,7 +10,7 @@ class Config:
         Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
         / "diffusion-on-demand/models/WAI-NSFW-Illustrious-v17.0.safetensors"
     )
-    idle_seconds: float = 30
+    idle_seconds: float = 300
     startup_timeout: float = 600
     request_timeout: float = 600
     queue_timeout: float = 3600

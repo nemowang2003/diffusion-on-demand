@@ -624,3 +624,16 @@ dialog p {
     font-size: 16px;
   }
 }
+
+.history-card.selected {
+  border-color: var(--accent, #b66d40);
+}
+.history-placeholder {
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  background: #eee9e1;
+  color: #6c6258;
+  font-size: 12px;
+}

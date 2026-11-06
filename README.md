@@ -1,7 +1,7 @@
 # diffusion-on-demand
 
 本地 SDXL 生成 API 与轻量网页前端。轻量 HTTP 服务常驻，收到生成请求才启动独立的
-Diffusers / PyTorch 进程。请求共用 FIFO 队列，空闲 30 秒退出推理进程，
+Diffusers / PyTorch 进程。请求共用 FIFO 队列，空闲 5 分钟退出推理进程，
 释放模型、CPU 内存和 CUDA 上下文。状态查询不会加载模型。
 
 后端直接加载 SDXL 单文件 `.safetensors`，无需 Forge。
@@ -37,7 +37,11 @@ Diffusers / PyTorch 进程。请求共用 FIFO 队列，空闲 30 秒退出推�
   浏览器负责随后回收内存和整理磁盘，页面无法保证立即物理擦除。
   `blob:https://<host>/…` 是访问设备浏览器中的临时地址，域名表示创建来源，不代表服务器文件。
   手动下载的 PNG 是独立文件，不随历史删除。
-- 页面与状态查询不会加载模型或延长闲置时间；生成结束空闲 30 秒后仍会卸载模型。
+- 提交后立即创建含参数快照的历史条目，可连续提交多次，服务按 FIFO 排队。
+  选中等待中的条目才显示“生成中”；浏览其他图片时，后台完成不会切换当前预览。
+  失败请求也保留参数供重试。删除等待中的条目会丢弃返回结果，但不会取消服务端计算。
+  页面刷新或关闭会断开等待响应；这些未完成条目显示“状态未知”，不能重新接收原请求结果。
+- 页面与状态查询不会加载模型或延长闲置时间；生成结束空闲 5 分钟后仍会卸载模型。
   页面、预览与本地历史不受模型卸载影响。下一次生成会等待模型重新加载。
 - 开启鉴权时在“连接凭据”输入 API key，仅保存在页面内存中，不写入历史或浏览器存储。
 
@@ -89,7 +93,7 @@ nix build .#wsl
 创建 `~/.config/diffusion-on-demand/config.toml`：
 
 ```toml
-idle_seconds = 30
+idle_seconds = 300
 offload = "model"
 # 仅当入口已经由 Tailscale Serve 等限制访问时显式关闭鉴权。
 auth_required = false
@@ -172,7 +176,7 @@ JSON Schema、当前可用模型和主机默认模型/卸载策略，不加载�
     settings = {
       model = "${config.xdg.dataHome}/diffusion-on-demand/models/WAI-NSFW-Illustrious-v17.0.safetensors";
       auth_required = false; # 入口由 Tailnet 控制时
-      idle_seconds = 30;
+      idle_seconds = 300;
       offload = "model";
     };
   };

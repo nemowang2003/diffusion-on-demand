@@ -11,7 +11,7 @@ let currentURL = null;
 let currentID = null;
 let deletionID = null;
 let thumbnailURLs = [];
-let generating = false;
+const activeJobs = new Map();
 let polling = false;
 let optionDefinitions = {};
 let optionDefaults = {};
@@ -46,7 +46,7 @@ function updateModelPreset() {
 }
 
 $("idle-note").textContent =
-  `空闲 ${settings.idle_seconds} 秒自动释放模型。下次生成时重新加载。`;
+  `空闲 ${settings.idle_seconds % 60 === 0 ? settings.idle_seconds / 60 + " 分钟" : settings.idle_seconds + " 秒"}自动释放模型。下次生成时重新加载。`;
 if (settings.auth_required) {
   $("auth-details").open = true;
   $("advanced-parameters").open = true;
@@ -421,20 +421,39 @@ function updateHistory(record, removeIDs = []) {
 }
 
 function showRecord(record, restore = false) {
+  clearPreview();
   currentID = record.id;
-  if (currentURL) URL.revokeObjectURL(currentURL);
-  currentURL = URL.createObjectURL(record.blob);
-  $("preview").src = currentURL;
-  $("preview").alt = record.params.prompt;
-  $("preview").hidden = false;
-  $("empty-state").hidden = true;
-  $("download").href = currentURL;
-  $("download").download = `diffusion-${record.seed}-${record.created}.png`;
-  $("download").hidden = false;
+  const pending = activeJobs.has(record.id) && record.status === "pending";
+  $("canvas").setAttribute("aria-busy", String(pending));
+  $("working").hidden = !pending;
+  $("empty-state").hidden = pending || Boolean(record.blob);
+  if (record.blob) {
+    currentURL = URL.createObjectURL(record.blob);
+    $("preview").src = currentURL;
+    $("preview").alt = record.params.prompt;
+    $("preview").hidden = false;
+    $("download").href = currentURL;
+    $("download").download = `diffusion-${record.seed}-${record.created}.png`;
+    $("download").hidden = false;
+  } else if (record.status === "failed") {
+    $("empty-title").textContent = "本次生成未完成";
+    $("empty-description").textContent =
+      "可以复用此条目的参数，修改后重新提交。";
+    $("error").textContent = record.error;
+    $("error").hidden = false;
+  } else if (!pending) {
+    $("empty-title").textContent = "请求状态未知";
+    $("empty-description").textContent =
+      "此请求来自先前页面或其他标签页，无法在这里接收结果。可查看服务状态后重新提交。";
+  }
   $("preview-meta").textContent =
     `${record.params.width} × ${record.params.height} · ${record.params.steps} 步`;
   $("result-info").textContent =
     `Seed ${record.seed} · ${new Date(record.created).toLocaleString("zh-CN")}`;
+  updateElapsed();
+  for (const card of $("history").children) {
+    card.classList.toggle("selected", card.dataset.recordId === currentID);
+  }
   if (restore) {
     $("prompt").value = record.params.prompt;
     $("negative-prompt").value = record.params.negative_prompt;
@@ -466,18 +485,34 @@ function renderHistory() {
   for (const record of records) {
     const card = document.createElement("article");
     card.className = "history-card";
+    card.dataset.recordId = record.id;
+    card.dataset.status = record.blob ? "completed" : record.status;
+    card.classList.toggle("selected", record.id === currentID);
     const open = document.createElement("button");
     open.type = "button";
     open.className = "history-open";
     open.title = `预览并复用参数：${record.params.prompt}`;
-    const img = document.createElement("img");
-    img.src = URL.createObjectURL(record.blob);
-    thumbnailURLs.push(img.src);
-    img.alt = record.params.prompt;
-    img.loading = "lazy";
+    if (record.blob) {
+      const img = document.createElement("img");
+      img.src = URL.createObjectURL(record.blob);
+      thumbnailURLs.push(img.src);
+      img.alt = record.params.prompt;
+      img.loading = "lazy";
+      open.append(img);
+    } else {
+      const placeholder = document.createElement("div");
+      placeholder.className = "history-placeholder";
+      placeholder.textContent =
+        record.status === "failed"
+          ? "生成失败"
+          : activeJobs.has(record.id)
+            ? "生成中 · 排队或处理中"
+            : "状态未知";
+      open.append(placeholder);
+    }
     const caption = document.createElement("span");
     caption.textContent = record.params.prompt;
-    open.append(img, caption);
+    open.append(caption);
     open.addEventListener("click", () => showRecord(record, true));
     const remove = document.createElement("button");
     remove.type = "button";
@@ -530,13 +565,11 @@ $("example").addEventListener("click", () => {
 
 $("generate-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (generating) return;
   if (!$("prompt").value.trim()) {
     $("prompt").focus();
     return;
   }
   if (!optionsReady && !(await loadOptions())) return;
-  if (generating) return;
   let advanced;
   try {
     advanced = readOptionValues();
@@ -555,67 +588,82 @@ $("generate-form").addEventListener("submit", async (event) => {
     seed: Number($("seed").value),
     ...advanced,
   };
-  generating = true;
-  $("generate").disabled = true;
-  $("generate-label").textContent = "生成中…";
-  $("canvas").setAttribute("aria-busy", "true");
-  $("working").hidden = false;
-  $("error").hidden = true;
-  const started = Date.now();
-  const tick = () => {
-    $("elapsed").textContent =
-      `已等待 ${Math.floor((Date.now() - started) / 1000)} 秒`;
+  await historyReady;
+  const record = {
+    id: crypto.randomUUID(),
+    created: Date.now(),
+    params,
+    seed: params.seed,
+    status: "pending",
   };
-  tick();
-  const timer = setInterval(tick, 1000);
+  const job = { record, deleted: false, headers: headers() };
+  activeJobs.set(record.id, job);
+  records.unshift(record);
+  historyTotal += 1;
+  renderHistory();
+  showRecord(record);
+  void runJob(job);
+});
+
+function updateElapsed() {
+  const job = activeJobs.get(currentID);
+  if (job && job.record.status === "pending") {
+    $("elapsed").textContent =
+      `已等待 ${Math.floor((Date.now() - job.record.created) / 1000)} 秒（含排队与模型加载）`;
+  }
+}
+setInterval(updateElapsed, 1000);
+
+async function persistRecord(record) {
+  if (!database) return;
   try {
+    await updateHistory(record);
+  } catch {
+    storageNotice(
+      "本地历史保存失败（可能空间不足）。本次记录仅在当前页面保留，请及时下载图片。",
+    );
+  }
+}
+
+async function runJob(job) {
+  const { record } = job;
+  try {
+    await persistRecord(record);
+    if (job.deleted) return;
     const response = await api("generate", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(params),
+      headers: { ...job.headers, "Content-Type": "application/json" },
+      body: JSON.stringify(record.params),
     });
     if (!response.ok) throw await responseError(response);
     if (!response.headers.get("content-type")?.startsWith("image/png")) {
       throw new Error("服务未返回 PNG 图片，请检查代理配置。");
     }
-    const record = {
-      id: crypto.randomUUID(),
-      created: Date.now(),
-      params,
-      seed: Number(response.headers.get("X-Seed") ?? params.seed),
-      blob: await response.blob(),
-    };
-    await historyReady;
-    showRecord(record);
-    records.unshift(record);
-    historyTotal += 1;
-    if (database) {
-      try {
-        historyTotal = Math.max(await updateHistory(record), records.length);
-      } catch {
-        storageNotice(
-          "图片已生成，但本地历史保存失败（可能空间不足）。请先下载图片；本次结果仅在当前页面保留。",
-        );
-      }
-    }
-    renderHistory();
+    const blob = await response.blob();
+    if (job.deleted) return;
+    record.blob = blob;
+    record.seed = Number(response.headers.get("X-Seed") ?? record.params.seed);
+    record.status = "completed";
   } catch (error) {
-    $("error").textContent =
+    if (job.deleted) return;
+    record.status = "failed";
+    record.error =
       error instanceof TypeError
         ? "连接中断或服务不可用，请检查 Tailscale 连接。请求可能仍在服务器执行，可留意右上角状态后再重试。"
         : error.message;
-    $("error").hidden = false;
-    if ($("error").textContent.includes("API key")) revealControl($("api-key"));
   } finally {
-    clearInterval(timer);
-    generating = false;
-    $("generate").disabled = false;
-    $("generate-label").textContent = "生成图片";
-    $("canvas").setAttribute("aria-busy", "false");
-    $("working").hidden = true;
+    // A deleted in-flight result must never recreate its history entry.
+    if (!job.deleted) {
+      await persistRecord(record);
+      if (!job.deleted) {
+        renderHistory();
+        if (currentID === record.id) showRecord(record);
+      }
+    }
+    activeJobs.delete(record.id);
     void pollStatus();
   }
-});
+}
 
 function confirmDeletion(id = null) {
   deletionID = id;
@@ -625,6 +673,10 @@ function confirmDeletion(id = null) {
     id === null
       ? "将删除此浏览器保存的所有图片和参数。已下载的文件不受影响。"
       : "将删除此浏览器保存的这张图片和参数。已下载的文件不受影响。";
+  if ([...activeJobs.keys()].some((key) => id === null || key === id)) {
+    $("delete-description").textContent +=
+      " 尚未完成的请求可能继续在服务器执行，返回的图片将被丢弃。";
+  }
   $("confirm-clear").textContent = id === null ? "清空历史" : "删除图片";
   $("clear-dialog").showModal();
 }
@@ -638,6 +690,11 @@ function clearPreview() {
   $("download").removeAttribute("href");
   $("download").hidden = true;
   $("empty-state").hidden = false;
+  $("empty-title").textContent = "这里，是想象的起点。";
+  $("empty-description").textContent = "描述一个画面，让想象成为图像。";
+  $("working").hidden = true;
+  $("error").hidden = true;
+  $("canvas").setAttribute("aria-busy", "false");
   $("preview-meta").textContent = "等待灵感落笔";
   $("result-info").textContent = "图片只保存在当前浏览器。";
 }
@@ -647,6 +704,10 @@ $("cancel-clear").addEventListener("click", () => $("clear-dialog").close());
 $("confirm-clear").addEventListener("click", async () => {
   $("confirm-clear").disabled = true;
   const id = deletionID;
+  const jobs = [...activeJobs.values()].filter(
+    (job) => id === null || job.record.id === id,
+  );
+  for (const job of jobs) job.deleted = true;
   try {
     if (database) {
       // Clear atomically; keep the in-memory list if storage fails.
@@ -665,6 +726,7 @@ $("confirm-clear").addEventListener("click", async () => {
     renderHistory();
     if (id === null || currentID === id) clearPreview();
   } catch {
+    for (const job of jobs) job.deleted = false;
     storageNotice("无法删除本地历史，请检查浏览器存储权限后重试。");
   } finally {
     $("confirm-clear").disabled = false;

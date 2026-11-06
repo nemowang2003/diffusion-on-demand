@@ -113,6 +113,7 @@ class APITests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(page.status_code, 200, path)
                 self.assertRegex(page.text, r'<base\s+href="/diffusion/"')
                 self.assertIn('"auth_required": true', page.text)
+                self.assertIn('"idle_seconds": 300', page.text)
                 self.assertNotIn("secret-key", page.text)
             for path in ("/assets/app.js", "/diffusion/assets/app.js"):
                 self.assertEqual((await client.get(path)).status_code, 200)

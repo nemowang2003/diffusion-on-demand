@@ -1,6 +1,7 @@
 """Download a pinned Civitai artifact; never install an unverified checkpoint."""
 
 import hashlib
+import json
 import os
 import tempfile
 from contextlib import closing
@@ -8,20 +9,25 @@ from pathlib import Path
 
 import httpx
 
-MODEL_VERSION = 290640
-FILE_ID = 228616
-SHA256 = "67ab2fd8ec439a89b3fedb15cc65f54336af163c7eb5e4f2acc98f090a29b0b3"
-URL = f"https://civitai.com/api/download/models/{MODEL_VERSION}?fileId={FILE_ID}"
-MIRROR = "https://huggingface.co/AstraliteHeart/pony-diffusion-v6/resolve/5ec9c05863255568f1b59753e3838107befaa712/v6.safetensors"
+
+def artifact_for(path: Path):
+    presets = json.loads(Path(__file__).with_name("web").joinpath("model-presets.json").read_text())
+    if path.name not in presets:
+        raise ValueError(
+            f"No pinned download for {path.name}; choose a filename from model-presets.json"
+        )
+    return presets[path.name]["artifact"]
 
 
-def verify(path: Path):
+def verify(path: Path, sha256: str | None = None):
+    expected = sha256 or artifact_for(path)["sha256"]
     with path.open("rb") as source:
-        return hashlib.file_digest(source, "sha256").hexdigest() == SHA256
+        return hashlib.file_digest(source, "sha256").hexdigest() == expected
 
 
 def download(destination: str):
     target = Path(destination).expanduser()
+    artifact = artifact_for(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists():
         if verify(target):
@@ -29,7 +35,9 @@ def download(destination: str):
             return
         raise ValueError(f"Existing file fails SHA-256 verification: {target}")
     headers = {}
-    if token := os.environ.get("CIVITAI_TOKEN"):
+    if httpx.URL(artifact["url"]).host == "civitai.com" and (
+        token := os.environ.get("CIVITAI_TOKEN")
+    ):
         headers["Authorization"] = f"Bearer {token}"
     # Secrets are sent only to Civitai. httpx drops Authorization on redirects
     # to the artifact CDN, and credentials never appear in query strings.
@@ -40,21 +48,17 @@ def download(destination: str):
             os.chmod(output.name, 0o600)
             with httpx.Client(follow_redirects=True, timeout=120) as client:
                 response = client.send(
-                    client.build_request("GET", URL, headers=headers), stream=True
+                    client.build_request("GET", artifact["url"], headers=headers), stream=True
                 )
-                if response.status_code in (401, 403):
-                    response.close()
-                    print("Civitai denied download; trying the author mirror (identical SHA-256).")
-                    response = client.send(client.build_request("GET", MIRROR), stream=True)
                 with closing(response):
                     if response.status_code in (401, 403):
                         raise ValueError(
-                            "Civitai denied download. Set CIVITAI_TOKEN, or download manually and run verify-model."
+                            "Download denied. Set the appropriate credentials, or download manually and run verify-model."
                         )
                     response.raise_for_status()
                     for chunk in response.iter_bytes(1024 * 1024):
                         output.write(chunk)
-        if not verify(temporary):
+        if not verify(temporary, artifact["sha256"]):
             raise ValueError("Downloaded model SHA-256 mismatch; file discarded")
         # Do not overwrite a model downloaded concurrently.
         os.link(temporary, target)

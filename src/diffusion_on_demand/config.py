@@ -8,7 +8,7 @@ from pathlib import Path
 class Config:
     model: str = str(
         Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
-        / "diffusion-on-demand/models/pony-v6-xl.safetensors"
+        / "diffusion-on-demand/models/WAI-NSFW-Illustrious-v17.0.safetensors"
     )
     idle_seconds: float = 30
     startup_timeout: float = 600

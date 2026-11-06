@@ -1,23 +1,4 @@
 {
-  "pony-v6-xl.safetensors": {
-    "label": "Pony Diffusion V6 XL",
-    "source": "https://huggingface.co/AstraliteHeart/pony-diffusion-v6",
-    "artifact": {
-      "url": "https://huggingface.co/AstraliteHeart/pony-diffusion-v6/resolve/5ec9c05863255568f1b59753e3838107befaa712/v6.safetensors",
-      "sha256": "67ab2fd8ec439a89b3fedb15cc65f54336af163c7eb5e4f2acc98f090a29b0b3"
-    },
-    "parameters": {
-      "prompt": "score_9, score_8_up, score_7_up, score_6_up, source_anime, rating_safe, 1girl, solo, long hair, detailed eyes, beautiful face",
-      "negative_prompt": "score_4, score_5, score_6, low quality, worst quality, bad anatomy, bad hands, extra fingers, deformed, blurry, watermark, text",
-      "width": 832,
-      "height": 1216,
-      "steps": 30,
-      "cfg_scale": 6.5,
-      "sampler": "euler_a",
-      "scheduler_options": {},
-      "clip_skip": 0
-    }
-  },
   "WAI-NSFW-Illustrious-v17.0.safetensors": {
     "label": "WAI-NSFW-Illustrious v17.0",
     "source": "https://civitai.com/models/827184?modelVersionId=2883731",
@@ -58,6 +39,28 @@
       "scheduler_options": {
         "prediction_type": "epsilon",
         "rescale_betas_zero_snr": false
+      },
+      "clip_skip": 0
+    }
+  },
+  "NoobAI-XL-Vpred-v1.0.safetensors": {
+    "label": "NoobAI-XL V-pred 1.0",
+    "source": "https://huggingface.co/Laxhar/noobai-XL-Vpred-1.0",
+    "artifact": {
+      "url": "https://huggingface.co/Laxhar/noobai-XL-Vpred-1.0/resolve/66aa55e3469c27c29a89813cd35dd95fb7485fa1/NoobAI-XL-Vpred-v1.0.safetensors",
+      "sha256": "ea349eeae87ca8d25ba902c93810f7ca83e5c82f920edf12f273af004ae02819"
+    },
+    "parameters": {
+      "prompt": "masterpiece, best quality, newest, highres, safe",
+      "negative_prompt": "nsfw, worst quality, low quality, lowres, blurry, text, watermark",
+      "width": 832,
+      "height": 1216,
+      "steps": 30,
+      "cfg_scale": 5,
+      "sampler": "euler",
+      "scheduler_options": {
+        "prediction_type": "v_prediction",
+        "rescale_betas_zero_snr": true
       },
       "clip_skip": 0
     }

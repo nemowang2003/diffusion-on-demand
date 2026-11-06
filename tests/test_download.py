@@ -10,22 +10,29 @@ from diffusion_on_demand import download as module
 
 
 class DownloadTests(unittest.TestCase):
-    def test_civitai_fallback_verifies_identical_artifact_without_leaking_token(self):
+    def test_civitai_redirect_verifies_artifact_without_leaking_token(self):
         artifact = b"test model"
         calls = []
 
         def handler(request):
             calls.append(request)
             if request.url.host == "civitai.com":
-                return httpx.Response(403)
+                return httpx.Response(307, headers={"Location": "https://cdn.example/model"})
             return httpx.Response(200, content=artifact)
 
-        client = httpx.Client(transport=httpx.MockTransport(handler))
+        client = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "model.safetensors"
             with (
                 patch.object(module.httpx, "Client", return_value=client),
-                patch.object(module, "SHA256", hashlib.sha256(artifact).hexdigest()),
+                patch.object(
+                    module,
+                    "artifact_for",
+                    return_value={
+                        "url": "https://civitai.com/api/download/models/2883731",
+                        "sha256": hashlib.sha256(artifact).hexdigest(),
+                    },
+                ),
                 patch.dict(module.os.environ, {"CIVITAI_TOKEN": "secret"}),
             ):
                 module.download(str(target))
@@ -41,7 +48,7 @@ class DownloadTests(unittest.TestCase):
             transport=httpx.MockTransport(lambda _: httpx.Response(200, content=b"bad"))
         )
         with tempfile.TemporaryDirectory() as directory:
-            target = Path(directory) / "model.safetensors"
+            target = Path(directory) / "WAI-NSFW-Illustrious-v17.0.safetensors"
             with (
                 patch.object(module.httpx, "Client", return_value=client),
                 self.assertRaises(ValueError),

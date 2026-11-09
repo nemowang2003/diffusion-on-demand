@@ -2,14 +2,18 @@
 
 const $ = (id) => document.getElementById(id);
 const settings = JSON.parse($("ui-settings").textContent);
-const defaultPrompt = $("prompt").defaultValue;
 const historyPageSize = 24;
 let records = [];
 let historyTotal = 0;
 let database = null;
 let currentURL = null;
 let currentID = null;
-let deletionID = null;
+let deletionIDs = null;
+let historyBefore = null;
+const historyIndex = new Map();
+const selectedIDs = new Set();
+const collapsedDates = new Set();
+let releasing = false;
 let thumbnailURLs = [];
 const activeJobs = new Map();
 let polling = false;
@@ -109,7 +113,10 @@ async function pollStatus() {
         ? "模型已加载 · 等待创作"
         : "模型已释放 · 随时可用";
     $("status-dot").className = `dot ${status.active ? "busy" : "ready"}`;
+    $("release-model").disabled =
+      releasing || !status.loaded || status.active || status.pending > 0;
   } catch (error) {
+    $("release-model").disabled = true;
     $("model-status").textContent =
       error.message.includes("401") || error.message.includes("API key")
         ? "需要 API key"
@@ -123,6 +130,65 @@ setInterval(pollStatus, 4000);
 document.addEventListener("visibilitychange", pollStatus);
 $("api-key").addEventListener("change", pollStatus);
 void pollStatus();
+
+$("release-model").addEventListener("click", async () => {
+  releasing = true;
+  $("release-model").disabled = true;
+  try {
+    const response = await api("unload", {
+      method: "POST",
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!response.ok) throw await responseError(response);
+  } catch (error) {
+    $("error").textContent = error.message;
+    $("error").hidden = false;
+  } finally {
+    releasing = false;
+    await pollStatus();
+  }
+});
+
+// Cancel only wheel events that would change a focused number input, then
+// forward their scroll to the panel so the form stays scrollable.
+document.addEventListener(
+  "wheel",
+  (event) => {
+    const input = event.target.closest?.('input[type="number"]');
+    if (!input || document.activeElement !== input || event.ctrlKey) return;
+    event.preventDefault();
+    const panel = matchMedia("(min-width: 761px)").matches
+      ? input.closest(".controls")
+      : document.scrollingElement;
+    const unit =
+      event.deltaMode === 1
+        ? 16
+        : event.deltaMode === 2
+          ? panel.clientHeight
+          : 1;
+    panel.scrollBy({ top: event.deltaY * unit, left: event.deltaX * unit });
+  },
+  { passive: false },
+);
+for (const button of document.querySelectorAll("[data-adjust]")) {
+  button.addEventListener("click", () => {
+    const input = $(button.dataset.adjust);
+    const value = Number.isFinite(input.valueAsNumber)
+      ? input.valueAsNumber
+      : Number(input.defaultValue);
+    input.value = Math.min(
+      Number(input.max),
+      Math.max(
+        Number(input.min),
+        Math.round((value + Number(button.dataset.delta)) * 1000000) / 1000000,
+      ),
+    );
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+$("reset-seed").addEventListener("click", () => {
+  $("seed").value = -1;
+});
 
 function revealControl(input) {
   for (let node = input.parentElement; node; node = node.parentElement) {
@@ -420,7 +486,7 @@ function updateHistory(record, removeIDs = []) {
   });
 }
 
-function showRecord(record, restore = false) {
+function showRecord(record, restore = false, includeSeed = false) {
   clearPreview();
   currentID = record.id;
   const pending = activeJobs.has(record.id) && record.status === "pending";
@@ -451,7 +517,7 @@ function showRecord(record, restore = false) {
   $("result-info").textContent =
     `Seed ${record.seed} · ${new Date(record.created).toLocaleString("zh-CN")}`;
   updateElapsed();
-  for (const card of $("history").children) {
+  for (const card of $("history").querySelectorAll(".history-card")) {
     card.classList.toggle("selected", card.dataset.recordId === currentID);
   }
   if (restore) {
@@ -462,7 +528,7 @@ function showRecord(record, restore = false) {
     syncSizePreset();
     $("steps").value = record.params.steps;
     $("cfg").value = record.params.cfg_scale;
-    $("seed").value = record.seed;
+    if (includeSeed) $("seed").value = record.seed;
     restoreOptions = record.params;
     if (optionsReady) {
       for (const [name, definition] of Object.entries(optionDefinitions)) {
@@ -479,9 +545,81 @@ function renderHistory() {
   thumbnailURLs = [];
   $("history").replaceChildren();
   $("history-count").textContent = historyTotal;
-  $("history-empty").hidden = records.length > 0;
+  $("history-empty").hidden = historyIndex.size > 0;
   $("clear-history").disabled = historyTotal === 0;
   $("load-history").hidden = !database || records.length >= historyTotal;
+  const dateGrids = new Map();
+  const dates = [
+    ...new Set([...historyIndex.values()].map((item) => dateKey(item.created))),
+  ]
+    .sort()
+    .reverse();
+  for (const date of dates) {
+    const ids = [...historyIndex.values()]
+      .filter((item) => dateKey(item.created) === date)
+      .map((item) => item.id);
+    const day = document.createElement("details");
+    day.className = "history-day";
+    day.dataset.date = date;
+    day.open = !collapsedDates.has(date);
+    day.addEventListener("toggle", () => {
+      if (day.open) collapsedDates.delete(date);
+      else collapsedDates.add(date);
+    });
+    const heading = document.createElement("summary");
+    heading.textContent = `${date} · ${ids.length} 项`;
+    const actions = document.createElement("div");
+    actions.className = "day-actions";
+    const label = document.createElement("label");
+    label.className = "day-selection";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.dataset.selectDate = date;
+    checkbox.setAttribute("aria-label", `选择 ${date} 的全部记录`);
+    checkbox.addEventListener("change", () => {
+      for (const id of ids) {
+        if (checkbox.checked) selectedIDs.add(id);
+        else selectedIDs.delete(id);
+      }
+      updateSelection();
+    });
+    label.append(checkbox, "选择整天");
+    actions.append(label);
+    const loaded = new Set(records.map((record) => record.id));
+    if (ids.some((id) => !loaded.has(id))) {
+      const load = document.createElement("button");
+      load.type = "button";
+      load.className = "text-button load-day";
+      load.textContent = "显示当天全部记录";
+      load.addEventListener("click", async () => {
+        load.disabled = true;
+        try {
+          const items = await getHistoryRecords(
+            ids.filter((id) => !loaded.has(id)),
+          );
+          const existing = new Set(records.map((record) => record.id));
+          records.push(
+            ...items.filter(
+              (item) => !existing.has(item.id) && historyIndex.has(item.id),
+            ),
+          );
+          records.sort(
+            (a, b) => b.created - a.created || b.id.localeCompare(a.id),
+          );
+          renderHistory();
+        } catch {
+          storageNotice("读取历史失败，请稍后重试。");
+          load.disabled = false;
+        }
+      });
+      actions.append(load);
+    }
+    const grid = document.createElement("div");
+    grid.className = "history-grid";
+    dateGrids.set(date, grid);
+    day.append(heading, actions, grid);
+    $("history").append(day);
+  }
   for (const record of records) {
     const card = document.createElement("article");
     card.className = "history-card";
@@ -491,7 +629,7 @@ function renderHistory() {
     const open = document.createElement("button");
     open.type = "button";
     open.className = "history-open";
-    open.title = `预览并复用参数：${record.params.prompt}`;
+    open.title = `预览并复用参数（保留当前种子）：${record.params.prompt}`;
     if (record.blob) {
       const img = document.createElement("img");
       img.src = URL.createObjectURL(record.blob);
@@ -510,19 +648,36 @@ function renderHistory() {
             : "状态未知";
       open.append(placeholder);
     }
-    const caption = document.createElement("span");
-    caption.textContent = record.params.prompt;
-    open.append(caption);
     open.addEventListener("click", () => showRecord(record, true));
+    const copySeed = document.createElement("button");
+    copySeed.type = "button";
+    copySeed.className = "history-copy-seed";
+    copySeed.textContent = "复制种子";
+    copySeed.title = "复用全部配置，包括种子";
+    copySeed.addEventListener("click", () => showRecord(record, true, true));
+    const selection = document.createElement("label");
+    selection.className = "history-selection";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.dataset.selectId = record.id;
+    checkbox.checked = selectedIDs.has(record.id);
+    checkbox.setAttribute("aria-label", `选择图片：${record.params.prompt}`);
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) selectedIDs.add(record.id);
+      else selectedIDs.delete(record.id);
+      updateSelection();
+    });
+    selection.append(checkbox, "选择");
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "history-delete";
     remove.textContent = "删除";
     remove.setAttribute("aria-label", `删除图片：${record.params.prompt}`);
     remove.addEventListener("click", () => confirmDeletion(record.id));
-    card.append(open, remove);
-    $("history").append(card);
+    card.append(selection, open, copySeed, remove);
+    dateGrids.get(dateKey(record.created)).append(card);
   }
+  updateSelection();
 }
 
 const historyReady = (async () => {
@@ -530,7 +685,9 @@ const historyReady = (async () => {
     database = await openHistory();
     const page = await readHistory();
     records = page.items;
-    historyTotal = page.total;
+    historyBefore = page.items.at(-1);
+    await readHistoryIndex();
+    historyTotal = historyIndex.size;
     renderHistory();
     if (records.length) showRecord(records[0]);
   } catch {
@@ -543,9 +700,10 @@ const historyReady = (async () => {
 
 $("load-history").addEventListener("click", async () => {
   $("load-history").disabled = true;
-  const before = records.at(-1);
+  const before = historyBefore;
   try {
     const page = await readHistory(before);
+    historyBefore = page.items.at(-1) ?? historyBefore;
     const existing = new Set(records.map((record) => record.id));
     records.push(...page.items.filter((record) => !existing.has(record.id)));
     historyTotal = Math.max(page.total, records.length);
@@ -555,12 +713,6 @@ $("load-history").addEventListener("click", async () => {
   } finally {
     $("load-history").disabled = false;
   }
-});
-
-$("example").addEventListener("click", () => {
-  $("prompt").value =
-    `${defaultPrompt}, an adult woman wearing a blue coat in a snowy garden, soft winter sunlight, falling snow`;
-  $("prompt").focus();
 });
 
 $("generate-form").addEventListener("submit", async (event) => {
@@ -599,6 +751,8 @@ $("generate-form").addEventListener("submit", async (event) => {
   const job = { record, deleted: false, headers: headers() };
   activeJobs.set(record.id, job);
   records.unshift(record);
+  indexRecord(record);
+  $("release-model").disabled = true;
   historyTotal += 1;
   renderHistory();
   showRecord(record);
@@ -644,6 +798,7 @@ async function runJob(job) {
     record.blob = blob;
     record.seed = Number(response.headers.get("X-Seed") ?? record.params.seed);
     record.status = "completed";
+    indexRecord(record);
   } catch (error) {
     if (job.deleted) return;
     record.status = "failed";
@@ -666,14 +821,18 @@ async function runJob(job) {
 }
 
 function confirmDeletion(id = null) {
-  deletionID = id;
+  deletionIDs = id === null ? null : new Set(Array.isArray(id) ? id : [id]);
   $("delete-title").textContent =
-    id === null ? "清空本地历史？" : "删除这张图片？";
+    id === null ? "清空本地历史？" : `删除所选 ${deletionIDs.size} 项？`;
   $("delete-description").textContent =
     id === null
       ? "将删除此浏览器保存的所有图片和参数。已下载的文件不受影响。"
-      : "将删除此浏览器保存的这张图片和参数。已下载的文件不受影响。";
-  if ([...activeJobs.keys()].some((key) => id === null || key === id)) {
+      : `将删除此浏览器保存的所选 ${deletionIDs.size} 项记录和参数。已下载的文件不受影响。`;
+  if (
+    [...activeJobs.keys()].some(
+      (key) => deletionIDs === null || deletionIDs.has(key),
+    )
+  ) {
     $("delete-description").textContent +=
       " 尚未完成的请求可能继续在服务器执行，返回的图片将被丢弃。";
   }
@@ -703,9 +862,9 @@ $("clear-history").addEventListener("click", () => confirmDeletion());
 $("cancel-clear").addEventListener("click", () => $("clear-dialog").close());
 $("confirm-clear").addEventListener("click", async () => {
   $("confirm-clear").disabled = true;
-  const id = deletionID;
+  const ids = deletionIDs;
   const jobs = [...activeJobs.values()].filter(
-    (job) => id === null || job.record.id === id,
+    (job) => ids === null || ids.has(job.record.id),
   );
   for (const job of jobs) job.deleted = true;
   try {
@@ -714,22 +873,150 @@ $("confirm-clear").addEventListener("click", async () => {
       await new Promise((resolve, reject) => {
         const tx = database.transaction("images", "readwrite");
         const store = tx.objectStore("images");
-        if (id === null) store.clear();
-        else store.delete(id);
+        if (ids === null) store.clear();
+        else for (const id of ids) store.delete(id);
         tx.oncomplete = resolve;
         tx.onabort = () => reject(tx.error);
         tx.onerror = () => reject(tx.error);
       });
     }
-    records = id === null ? [] : records.filter((record) => record.id !== id);
-    historyTotal = id === null ? 0 : Math.max(0, historyTotal - 1);
+    records =
+      ids === null ? [] : records.filter((record) => !ids.has(record.id));
+    if (ids === null) {
+      historyIndex.clear();
+      selectedIDs.clear();
+    } else
+      for (const id of ids) {
+        historyIndex.delete(id);
+        selectedIDs.delete(id);
+      }
+    historyTotal = historyIndex.size;
     renderHistory();
-    if (id === null || currentID === id) clearPreview();
+    if (ids === null || ids.has(currentID)) clearPreview();
   } catch {
     for (const job of jobs) job.deleted = false;
     storageNotice("无法删除本地历史，请检查浏览器存储权限后重试。");
   } finally {
     $("confirm-clear").disabled = false;
     $("clear-dialog").close();
+  }
+});
+
+function dateKey(created) {
+  const date = new Date(created);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function indexRecord(record) {
+  historyIndex.set(record.id, {
+    id: record.id,
+    created: record.created,
+    hasBlob: Boolean(record.blob),
+  });
+}
+
+// Keep metadata for every date without retaining all PNG blobs in memory.
+function readHistoryIndex() {
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction("images", "readonly");
+    const request = tx.objectStore("images").openCursor();
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (cursor) {
+        indexRecord(cursor.value);
+        cursor.continue();
+      }
+    };
+    tx.oncomplete = resolve;
+    tx.onabort = tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function getHistoryRecords(ids) {
+  const loaded = new Map(records.map((record) => [record.id, record]));
+  const missing = ids.filter((id) => !loaded.has(id));
+  if (database && missing.length) {
+    await new Promise((resolve, reject) => {
+      const tx = database.transaction("images", "readonly");
+      const store = tx.objectStore("images");
+      for (const id of missing) {
+        const request = store.get(id);
+        request.onsuccess = () => {
+          if (request.result) loaded.set(id, request.result);
+        };
+      }
+      tx.oncomplete = resolve;
+      tx.onabort = tx.onerror = () => reject(tx.error);
+    });
+  }
+  return ids.map((id) => loaded.get(id)).filter(Boolean);
+}
+
+function updateSelection() {
+  $("selection-count").textContent = `已选 ${selectedIDs.size} 项`;
+  $("unselect-history").disabled = selectedIDs.size === 0;
+  $("delete-selected").disabled = selectedIDs.size === 0;
+  $("select-history").disabled = historyIndex.size === 0;
+  $("download-selected").disabled = ![...selectedIDs].some(
+    (id) => historyIndex.get(id)?.hasBlob,
+  );
+  for (const checkbox of $("history").querySelectorAll("[data-select-id]")) {
+    checkbox.checked = selectedIDs.has(checkbox.dataset.selectId);
+    checkbox
+      .closest(".history-card")
+      .classList.toggle("batch-selected", checkbox.checked);
+  }
+  for (const checkbox of $("history").querySelectorAll("[data-select-date]")) {
+    const ids = [...historyIndex.values()]
+      .filter((item) => dateKey(item.created) === checkbox.dataset.selectDate)
+      .map((item) => item.id);
+    const count = ids.filter((id) => selectedIDs.has(id)).length;
+    checkbox.checked = count === ids.length;
+    checkbox.indeterminate = count > 0 && count < ids.length;
+  }
+}
+
+$("select-history").addEventListener("click", () => {
+  for (const id of historyIndex.keys()) selectedIDs.add(id);
+  updateSelection();
+});
+$("unselect-history").addEventListener("click", () => {
+  selectedIDs.clear();
+  updateSelection();
+});
+$("delete-selected").addEventListener("click", () =>
+  confirmDeletion([...selectedIDs]),
+);
+$("download-selected").addEventListener("click", async () => {
+  const button = $("download-selected");
+  button.disabled = true;
+  button.textContent = "正在打包…";
+  let url;
+  try {
+    const items = (await getHistoryRecords([...selectedIDs])).filter(
+      (item) => item.blob,
+    );
+    if (!items.length) return;
+    const zip = await createImageZip(
+      items.map((item) => ({
+        name: `diffusion-${item.seed}-${item.created}-${item.id}.png`,
+        blob: item.blob,
+        created: item.created,
+      })),
+    );
+    url = URL.createObjectURL(zip);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `diffusion-${dateKey(Date.now())}.zip`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+  } catch (error) {
+    storageNotice(`批量下载失败：${error.message}`);
+  } finally {
+    // Give the browser time to start reading the download before releasing it.
+    if (url) setTimeout(() => URL.revokeObjectURL(url), 60000);
+    button.textContent = "下载所选 ZIP";
+    updateSelection();
   }
 });

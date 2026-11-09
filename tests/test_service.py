@@ -87,7 +87,13 @@ class APITests(unittest.IsolatedAsyncioTestCase):
                 page = await client.get("/")
                 self.assertEqual(page.status_code, 200)
                 self.assertRegex(page.text, r'<base\s+href="/"')
-                for path in ("/assets/app.js", "/assets/style.css", "/status"):
+                for path in (
+                    "/assets/app.js",
+                    "/assets/zip.js",
+                    "/assets/favicon.svg",
+                    "/assets/style.css",
+                    "/status",
+                ):
                     self.assertEqual((await client.get(path)).status_code, 200)
                 self.assertIsNone(app.state.runtime.process)
                 await client.post("/generate", json={"prompt": "one"})

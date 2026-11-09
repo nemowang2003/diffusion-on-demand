@@ -6,11 +6,12 @@
     <meta name="color-scheme" content="light" />
     <base href="__BASE_PATH__" />
     <title>Diffusion · 本地生图</title>
-    <link rel="icon" href="data:," />
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="assets/style.css" />
     <script id="ui-settings" type="application/json">
       __UI_SETTINGS__
     </script>
+    <script src="assets/zip.js" defer></script>
     <script src="assets/app.js" defer></script>
   </head>
   <body>
@@ -22,6 +23,9 @@
       <div class="connection">
         <span id="status-dot" class="dot"></span
         ><span id="model-status" role="status">正在连接…</span>
+        <button id="release-model" type="button" class="button" disabled>
+          释放模型
+        </button>
       </div>
     </header>
     <main class="workspace">
@@ -32,6 +36,19 @@
         <form id="generate-form">
           <div id="model-selection">
             <p class="option-note">正在读取模型…</p>
+          </div>
+          <div class="model-info">
+            <p class="option-note" id="preset-description">
+              按钮只替换正向和负向提示词。切换模型会采用其推荐采样参数，可在这里继续调整。
+            </p>
+            <a
+              id="preset-source"
+              class="text-button"
+              target="_blank"
+              rel="noopener noreferrer"
+              hidden
+              >模型说明 ↗</a
+            >
           </div>
           <div class="model-preset">
             <button
@@ -68,20 +85,6 @@ masterpiece, best quality, amazing quality, general</textarea>
 bad quality, worst quality, worst detail, nsfw</textarea>
           <details id="advanced-parameters">
             <summary>高级参数</summary>
-            <p class="option-note" id="preset-description">
-              按钮只替换正向和负向提示词。切换模型会采用其推荐采样参数，可在这里继续调整。
-            </p>
-            <a
-              id="preset-source"
-              class="text-button"
-              target="_blank"
-              rel="noopener noreferrer"
-              hidden
-              >模型说明 ↗</a
-            >
-            <button type="button" id="example" class="text-button">
-              试试雪中庭院 ↗
-            </button>
             <div class="section-label">画面设置</div>
             <label for="size">尺寸</label>
             <select id="size">
@@ -119,42 +122,84 @@ bad quality, worst quality, worst detail, nsfw</textarea>
             </div>
             <div class="field-row">
               <div>
-                <label for="steps">步数</label
-                ><input
-                  id="steps"
-                  type="number"
-                  min="1"
-                  max="1000"
-                  step="1"
-                  value="30"
-                  required
-                />
+                <label for="steps">步数</label>
+                <div class="number-control">
+                  <input
+                    id="steps"
+                    type="number"
+                    min="1"
+                    max="1000"
+                    step="1"
+                    value="30"
+                    required
+                  />
+                  <div class="number-actions">
+                    <button
+                      type="button"
+                      data-adjust="steps"
+                      data-delta="-5"
+                      aria-label="减少步数"
+                    >
+                      −</button
+                    ><button
+                      type="button"
+                      data-adjust="steps"
+                      data-delta="5"
+                      aria-label="增加步数"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
               </div>
               <div>
-                <label for="cfg">提示词引导 CFG</label
-                ><input
-                  id="cfg"
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="0.1"
-                  value="6.5"
-                  required
-                />
+                <label for="cfg">提示词引导 CFG</label>
+                <div class="number-control">
+                  <input
+                    id="cfg"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.1"
+                    value="6.5"
+                    required
+                  />
+                  <div class="number-actions">
+                    <button
+                      type="button"
+                      data-adjust="cfg"
+                      data-delta="-0.5"
+                      aria-label="减少CFG"
+                    >
+                      −</button
+                    ><button
+                      type="button"
+                      data-adjust="cfg"
+                      data-delta="0.5"
+                      aria-label="增加CFG"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
             <label for="seed"
               >种子 <span class="label-note">−1 为随机</span></label
             >
-            <input
-              id="seed"
-              type="number"
-              min="-1"
-              max="4294967295"
-              step="1"
-              value="-1"
-              required
-            />
+            <div class="number-control">
+              <input
+                id="seed"
+                type="number"
+                min="-1"
+                max="4294967295"
+                step="1"
+                value="-1"
+                required
+              /><button id="reset-seed" type="button" class="reset-seed">
+                置为 -1
+              </button>
+            </div>
             <div id="generation-options" aria-live="polite"></div>
             <p class="option-note" id="options-state">
               正在读取可用模型与参数…
@@ -233,7 +278,27 @@ bad quality, worst quality, worst detail, nsfw</textarea>
           <p class="history-note">
             图片保存在此浏览器，不限张数、不自动删除，受浏览器存储空间限制。
           </p>
-          <div id="history" class="history-grid"></div>
+          <div class="history-actions">
+            <button id="select-history" type="button" class="button">
+              全选
+            </button>
+            <button id="unselect-history" type="button" class="button" disabled>
+              取消选择
+            </button>
+            <span id="selection-count" role="status">已选 0 项</span>
+            <button
+              id="download-selected"
+              type="button"
+              class="button"
+              disabled
+            >
+              下载所选 ZIP
+            </button>
+            <button id="delete-selected" type="button" class="button" disabled>
+              删除所选
+            </button>
+          </div>
+          <div id="history"></div>
           <button id="load-history" type="button" class="button" hidden>
             加载更早的图片
           </button>

@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import zipfile
 from pathlib import Path
 from urllib.request import urlopen
 
@@ -109,6 +110,62 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             )
             page.screenshot(path="/tmp/diffusion-web-desktop.png", full_page=True)
             page.locator("#advanced-parameters > summary").click()
+            # Explicit steppers preserve free-form legal input and clamp limits.
+            page.locator("#steps").fill("28")
+            page.locator('[data-adjust="steps"][data-delta="5"]').click()
+            expect(page.locator("#steps")).to_have_value("33")
+            page.locator('[data-adjust="steps"][data-delta="-5"]').click()
+            expect(page.locator("#steps")).to_have_value("28")
+            page.locator("#steps").fill("1")
+            page.locator('[data-adjust="steps"][data-delta="-5"]').click()
+            expect(page.locator("#steps")).to_have_value("1")
+            page.locator("#cfg").fill("5.7")
+            page.locator('[data-adjust="cfg"][data-delta="0.5"]').click()
+            expect(page.locator("#cfg")).to_have_value("6.2")
+            page.locator('[data-adjust="cfg"][data-delta="-0.5"]').click()
+            expect(page.locator("#cfg")).to_have_value("5.7")
+            page.locator("#cfg").fill("100")
+            page.locator('[data-adjust="cfg"][data-delta="0.5"]').click()
+            expect(page.locator("#cfg")).to_have_value("100")
+            page.locator("#cfg").fill("6.5")
+            page.locator("#seed").fill("42")
+            page.locator("#reset-seed").click()
+            expect(page.locator("#seed")).to_have_value("-1")
+            page.locator("#steps").focus()
+            page.locator("#steps").hover()
+            page.mouse.wheel(0, 120)
+            expect(page.locator("#steps")).to_have_value("1")
+            assert (
+                page.locator("#steps").evaluate("node => getComputedStyle(node).appearance")
+                == "textfield"
+            )
+            assert page.locator("#preset-source").evaluate("node => !node.closest('details')")
+            assert (
+                page.locator("#advanced-parameters").evaluate(
+                    "node => node.children[1].textContent"
+                )
+                == "画面设置"
+            )
+            assert page.locator("link[rel=icon]").get_attribute("href") == "assets/favicon.svg"
+            assert page.request.get(base + "assets/favicon.svg").status == 200
+            # Status polling alone controls whether model release is available.
+            expect(page.locator("#release-model")).to_be_disabled()
+            page.route(
+                "**/status",
+                lambda route: route.fulfill(json={"loaded": True, "active": False, "pending": 0}),
+            )
+            page.evaluate("pollStatus()")
+            expect(page.locator("#release-model")).to_be_enabled()
+            with page.expect_request("**/unload") as unload:
+                page.locator("#release-model").click()
+            assert unload.value.method == "POST"
+            page.route(
+                "**/status",
+                lambda route: route.fulfill(json={"loaded": True, "active": True, "pending": 1}),
+            )
+            page.evaluate("pollStatus()")
+            expect(page.locator("#release-model")).to_be_disabled()
+            page.unroute("**/status")
             for summary in page.locator(".option-group summary").all():
                 summary.click()
             page.locator("#option-precision").select_option("float32")
@@ -148,9 +205,12 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
                 assert png.startswith(b"\x89PNG\r\n\x1a\n")
             page.reload()
             expect(page.locator("#history-count")).to_have_text("1")
+            page.locator("#seed").evaluate("node => node.value = -1")
             page.locator(".history-open").click()
             expect(page.locator("#prompt")).to_have_value("a quiet forest")
             expect(page.locator("#negative-prompt")).to_have_value("")
+            expect(page.locator("#seed")).to_have_value("-1")
+            page.locator(".history-copy-seed").click()
             expect(page.locator("#seed")).to_have_value("42")
             page.locator("#api-key").fill("browser-test-key")
             page.locator("#api-key").dispatch_event("change")
@@ -266,7 +326,7 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
                 await new Promise((resolve, reject) => {
                     const tx = db.transaction('images', 'readwrite');
                     for (let i = 0; i < 61; i++) tx.objectStore('images').put({
-                        id: `old-${String(i).padStart(3,'0')}`, created: i + 1,
+                        id: `old-${String(i).padStart(3,'0')}`, created: Date.UTC(2025, 0, i < 30 ? 1 : 2) + i,
                         params: {prompt:`old image ${i}`, negative_prompt:'', width:832,
                             height:1216, steps:30, cfg_scale:6.5, seed:i}, seed:i,
                         blob:new Blob(['old-image'], {type:'image/png'})
@@ -279,6 +339,46 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             archive_page.reload()
             expect(archive_page.locator("#history-count")).to_have_text("61")
             expect(archive_page.locator(".history-card")).to_have_count(24)
+            expect(archive_page.locator(".history-day")).to_have_count(2)
+            day = archive_page.locator(".history-day").first
+            day.locator(".day-selection input").check()
+            expect(archive_page.locator("#selection-count")).to_have_text("已选 31 项")
+            # ZIP includes the seven records not loaded as thumbnails, with
+            # valid CRCs and the exact original PNG bytes.
+            with archive_page.expect_download() as batch:
+                archive_page.locator("#download-selected").click()
+            with tempfile.TemporaryDirectory() as directory:
+                target = Path(directory) / "batch.zip"
+                batch.value.save_as(target)
+                with zipfile.ZipFile(target) as zipped:
+                    assert len(zipped.namelist()) == 31
+                    assert zipped.testzip() is None
+                    assert all(zipped.read(name) == b"old-image" for name in zipped.namelist())
+            day.locator("summary").click()
+            expect(day.locator(".history-grid")).to_be_hidden()
+            archive_page.locator("#unselect-history").click()
+            expect(archive_page.locator("#selection-count")).to_have_text("已选 0 项")
+            archive_page.locator(".history-day").last.locator(".load-day").click()
+            expect(archive_page.locator(".history-card")).to_have_count(54)
+            expect(day.locator(".history-grid")).to_be_hidden()
+            archive_page.locator("#select-history").click()
+            expect(archive_page.locator("#selection-count")).to_have_text("已选 61 项")
+            archive_page.locator("#unselect-history").click()
+            # Return to the initial page to independently verify pagination.
+            archive_page.reload()
+            expect(archive_page.locator(".history-card")).to_have_count(24)
+            # Both desktop panels keep their own scroll position at the bottom.
+            archive_page.locator("#advanced-parameters").evaluate("node => node.open = true")
+            archive_page.locator(".controls").evaluate("node => node.scrollTop = node.scrollHeight")
+            left_scroll = archive_page.locator(".controls").evaluate("node => node.scrollTop")
+            assert left_scroll > 0
+            archive_page.locator(".canvas-panel").evaluate(
+                "node => node.scrollTop = node.scrollHeight"
+            )
+            assert (
+                archive_page.locator(".controls").evaluate("node => node.scrollTop") == left_scroll
+            )
+            assert archive_page.evaluate("scrollY") == 0
             archive_page.locator("#load-history").click()
             expect(archive_page.locator(".history-card")).to_have_count(48)
             archive_page.locator("#load-history").click()
@@ -323,6 +423,18 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             archive_page.locator("#confirm-clear").click()
             expect(archive_page.locator("#history-count")).to_have_text("60")
             expect(archive_page.locator("#download")).to_be_visible()
+            # Batch deletion includes unloaded records and survives reload.
+            archive_page.locator(".day-selection input").last.check()
+            expect(archive_page.locator("#selection-count")).to_have_text("已选 30 项")
+            archive_page.locator("#delete-selected").click()
+            archive_page.locator("#cancel-clear").click()
+            expect(archive_page.locator("#history-count")).to_have_text("60")
+            archive_page.locator("#delete-selected").click()
+            archive_page.locator("#confirm-clear").click()
+            expect(archive_page.locator("#history-count")).to_have_text("30")
+            expect(archive_page.locator("#selection-count")).to_have_text("已选 0 项")
+            archive_page.reload()
+            expect(archive_page.locator("#history-count")).to_have_text("30")
             archive.close()
             # Hold independent responses to verify concurrent submission and
             # selection, including deletion before a result arrives.
@@ -414,7 +526,7 @@ uvicorn.run(stripped_proxy, fd=int(sys.argv[1]), log_level='error')
             assert not errors, errors
             browser.close()
         print(
-            "Browser checks passed: proxy prefix, generation, exact prompts, PNG download, history, concurrent requests, selection, in-flight deletion, auth, errors, mobile layout and storage denial."
+            "Browser checks passed: proxy prefix, generation, exact prompts, PNG download, history dates, collapse, complete-day selection, ZIP integrity, batch deletion, steppers, wheel handling, model release, independent scrolling, concurrent requests, in-flight deletion, auth, errors, mobile layout and storage denial."
         )
     finally:
         process.terminate()
